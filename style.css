@@ -1,0 +1,170 @@
+/* ─── Reset & Base ─────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: #f5f7fa;
+  color: #333;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ─── Header ────────────────────────────────────────────────── */
+header {
+  background: #c0392b;
+  color: #fff;
+  padding: 1.5rem 2rem;
+  text-align: center;
+}
+
+header h1 {
+  font-size: 2.2rem;
+  letter-spacing: 1px;
+}
+
+header .subtitle {
+  font-size: 1rem;
+  opacity: 0.85;
+  margin-top: 0.25rem;
+}
+
+/* ─── Main ──────────────────────────────────────────────────── */
+main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2rem;
+  max-width: 960px;
+  width: 100%;
+  margin: 2rem auto;
+  padding: 0 1.5rem;
+}
+
+@media (max-width: 640px) {
+  main {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ─── Sections ──────────────────────────────────────────────── */
+.form-section,
+.list-section {
+  background: #fff;
+  border-radius: 8px;
+  padding: 1.5rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+h2 {
+  font-size: 1.2rem;
+  margin-bottom: 1rem;
+  color: #c0392b;
+  border-bottom: 2px solid #f0d0ce;
+  padding-bottom: 0.4rem;
+}
+
+/* ─── Form ──────────────────────────────────────────────────── */
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #555;
+}
+
+input {
+  padding: 0.55rem 0.75rem;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  font-size: 0.95rem;
+  transition: border-color 0.2s;
+}
+
+input:focus {
+  outline: none;
+  border-color: #c0392b;
+}
+
+button[type='submit'] {
+  margin-top: 0.5rem;
+  padding: 0.65rem;
+  background: #c0392b;
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+button[type='submit']:hover {
+  background: #a93226;
+}
+
+/* ─── Route List ─────────────────────────────────────────────── */
+#routeList {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.route-item {
+  background: #fdf2f1;
+  border-left: 4px solid #c0392b;
+  border-radius: 5px;
+  padding: 0.75rem 1rem;
+  position: relative;
+}
+
+.route-item strong {
+  display: block;
+  font-size: 1rem;
+  color: #222;
+}
+
+.route-item span {
+  font-size: 0.85rem;
+  color: #666;
+}
+
+.route-item .delete-btn {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.75rem;
+  background: none;
+  border: none;
+  color: #aaa;
+  font-size: 1.1rem;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.route-item .delete-btn:hover {
+  color: #c0392b;
+}
+
+.empty-message {
+  color: #aaa;
+  font-style: italic;
+  font-size: 0.9rem;
+}
+
+/* ─── Footer ─────────────────────────────────────────────────── */
+footer {
+  text-align: center;
+  padding: 1rem;
+  font-size: 0.8rem;
+  color: #aaa;
+  background: #fff;
+  border-top: 1px solid #eee;
+}

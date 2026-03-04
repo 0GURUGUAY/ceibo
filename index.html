@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ceibo – Gestión de Rutas</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>🌸 Ceibo</h1>
+    <p class="subtitle">Gestión de Rutas</p>
+  </header>
+
+  <main>
+    <section class="form-section">
+      <h2>Nueva Ruta</h2>
+      <form id="routeForm">
+        <label for="routeName">Nombre de la ruta</label>
+        <input type="text" id="routeName" placeholder="Ej: Ruta Norte" required />
+
+        <label for="routeOrigin">Origen</label>
+        <input type="text" id="routeOrigin" placeholder="Ej: Ciudad A" required />
+
+        <label for="routeDestination">Destino</label>
+        <input type="text" id="routeDestination" placeholder="Ej: Ciudad B" required />
+
+        <label for="routeDistance">Distancia (km)</label>
+        <input type="number" id="routeDistance" placeholder="Ej: 120" min="0" />
+
+        <button type="submit">Agregar Ruta</button>
+      </form>
+    </section>
+
+    <section class="list-section">
+      <h2>Rutas Registradas</h2>
+      <ul id="routeList">
+        <!-- Routes will be injected here by JavaScript -->
+      </ul>
+      <p id="emptyMessage" class="empty-message">No hay rutas registradas aún.</p>
+    </section>
+  </main>
+
+  <footer>
+    <p>Ceibo &copy; <span id="year"></span></p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
