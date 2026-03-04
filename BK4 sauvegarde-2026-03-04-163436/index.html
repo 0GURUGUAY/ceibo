@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CEIBO Router</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/jpeg" href="ceibo-favicon.jpg">
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+    <link rel="stylesheet" href="style.css"/>
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-image@0.4.0/leaflet-image.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+</head>
+<body>
+
+<div id="sidebar">
+    <h2>CEIBO Router V1.0</h2>
+
+    <div class="sidebar-tabs">
+        <button id="routesTabBtn" class="tab-btn active" type="button">Routes</button>
+        <button id="routingTabBtn" class="tab-btn" type="button">Routage</button>
+        <button id="arrivalTabBtn" class="tab-btn" type="button">Arrivée</button>
+    </div>
+
+    <div id="routingTab" class="tab-panel">
+        <label for="departureDateTimeInput" style="display: block; margin-top: 10px; font-size: 12px;">Départ (date + heure):</label>
+        <input type="datetime-local" id="departureDateTimeInput" step="3600" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
+
+        <div class="routing-control-grid">
+            <div class="routing-control-item">
+                <label for="tackingTimeInput">Temps du bord (min):</label>
+                <select id="tackingTimeInput">
+                    <option value="0.25">15 minutes</option>
+                    <option value="0.33">20 minutes</option>
+                    <option value="0.5" selected>30 minutes</option>
+                    <option value="0.75">45 minutes</option>
+                    <option value="1">1 heure</option>
+                    <option value="1.5">1.5 heures</option>
+                    <option value="2">2 heures</option>
+                </select>
+            </div>
+
+            <div class="routing-control-item">
+                <label for="sailModeSelect">Mode voiles:</label>
+                <select id="sailModeSelect">
+                    <option value="auto" selected>Auto</option>
+                    <option value="prudent">Prudent</option>
+                    <option value="performance">Performance</option>
+                </select>
+            </div>
+
+            <div class="routing-control-item">
+                <label for="autoWpSpacingInput">Contournement côte:</label>
+                <select id="autoWpSpacingInput">
+                    <option value="off" selected>Désactivé</option>
+                    <option value="5">5 NM</option>
+                    <option value="8">8 NM</option>
+                    <option value="10">10 NM</option>
+                    <option value="12">12 NM</option>
+                    <option value="15">15 NM</option>
+                    <option value="20">20 NM</option>
+                </select>
+            </div>
+
+            <div class="routing-control-item">
+                <label for="forecastWindowDaysSelect">Fenêtre analyse:</label>
+                <select id="forecastWindowDaysSelect">
+                    <option value="2">2 jours</option>
+                    <option value="3" selected>3 jours</option>
+                    <option value="5">5 jours</option>
+                    <option value="7">7 jours</option>
+                </select>
+            </div>
+        </div>
+
+        <button id="suggestDepartureBtn" style="margin-top:8px;">Conseiller départ météo (≤ 20 kn)</button>
+        <div id="departureSuggestionInfo" style="margin-top:6px; font-size:12px; opacity:0.9;">Suggestion départ: en attente</div>
+
+        <div class="button-row">
+                <button id="computeBtn" style="flex:1;">Calculer</button>
+                <button id="deleteSelectedWpBtn" style="flex:1;">Supprimer WP</button>
+            <button id="recenterBtn" style="flex:1;">Recentrer route</button>
+        </div>
+        <div id="selectedWpInfo" style="margin-top:6px; font-size:12px; opacity:0.9;">WP sélectionné: aucun · clic sur WP pour sélectionner · clic droit pour supprimer</div>
+
+        <div id="waypointWeatherInfo"></div>
+        <div id="info"></div>
+        <div id="windSpeedLegend"></div>
+    </div>
+
+    <div id="routesTab" class="tab-panel active">
+        <label for="routeNameInput" style="display: block; margin-top: 10px; font-size: 12px;">Nom de la route:</label>
+        <input type="text" id="routeNameInput" placeholder="Nom de la route" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
+
+        <div class="button-row">
+            <button id="saveRouteBtn" style="flex:1;">Sauvegarder</button>
+            <button id="exportRouteBtn" style="flex:1;">Exporter</button>
+            <button id="exportRouteGpxBtn" style="flex:1;">Exporter GPX</button>
+            <button id="resetBtn" style="flex:1;">Reset</button>
+        </div>
+        <button id="exportVoyagePdfBtn" style="margin-top:8px;">Exporter rapport PDF</button>
+
+        <label for="savedRoutesSelect" style="display: block; margin-top: 12px; font-size: 12px;">Routes sauvegardées:</label>
+        <select id="savedRoutesSelect" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;"></select>
+
+        <div class="button-row">
+            <button id="loadRouteBtn" style="flex:1;">Charger</button>
+            <button id="deleteRouteBtn" style="flex:1;">Supprimer</button>
+        </div>
+
+        <div class="button-row">
+            <button id="measureToggleBtn" style="flex:1;">Mesure NM: OFF</button>
+            <button id="measureClearBtn" style="flex:1;">Effacer mesure</button>
+        </div>
+        <div id="measureInfo" style="margin-top:6px; font-size:12px; opacity:0.9;">Mesure: 0.00 nm</div>
+
+        <label for="importRouteInput" style="display: block; margin-top: 12px; font-size: 12px;">Importer (JSON / GPX):</label>
+        <input type="file" id="importRouteInput" accept=".json,.gpx,application/json,application/gpx+xml,text/xml,application/xml" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
+    </div>
+
+    <div id="arrivalTab" class="tab-panel">
+        <button id="analyzeArrivalBtn">Conseiller mouillage à l'arrivée</button>
+        <div id="arrivalSummary" style="margin-top:8px; font-size:12px; opacity:0.9;">Analyse mouillage: en attente</div>
+
+        <div id="anchorageRecommendations" style="margin-top:10px;"></div>
+
+        <label style="display:block; margin-top:12px; font-size:12px;">Restaurants proches:</label>
+        <div id="nearbyRestaurants"></div>
+
+        <label style="display:block; margin-top:12px; font-size:12px;">Magasins / courses:</label>
+        <div id="nearbyShops"></div>
+    </div>
+</div>
+
+<div id="map"></div>
+
+<script type="module" src="app.js"></script>
+
+</body>
+</html>

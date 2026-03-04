@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CEIBO Router · Ayuda</title>
+  <link rel="icon" type="image/jpeg" href="ceibo-favicon.jpg">
+  <style>
+    :root {
+      --bg: #0f141b;
+      --panel: #151e29;
+      --panel-soft: #1a2634;
+      --text: #e8f1fb;
+      --muted: #a8bfd8;
+      --accent: #8fe7ff;
+      --accent-2: #ff9a3a;
+      --ok: #6ee7b7;
+      --warn: #fbbf24;
+      --danger: #f87171;
+      --border: rgba(143, 231, 255, 0.2);
+      --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Roboto, Arial, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(1200px 600px at 10% -20%, rgba(143, 231, 255, 0.08), transparent 60%),
+        radial-gradient(1000px 500px at 100% 0%, rgba(255, 154, 58, 0.08), transparent 60%),
+        var(--bg);
+      line-height: 1.5;
+    }
+
+    .wrap {
+      width: min(1100px, 92vw);
+      margin: 28px auto 60px;
+    }
+
+    .hero {
+      background: linear-gradient(135deg, rgba(143, 231, 255, 0.12), rgba(255, 154, 58, 0.12));
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 22px;
+      box-shadow: var(--shadow);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      letter-spacing: 0.2px;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .toc {
+      margin-top: 14px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .toc a {
+      text-decoration: none;
+      color: var(--accent);
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 12px;
+    }
+
+    .toc a:hover {
+      border-color: rgba(143, 231, 255, 0.55);
+      background: rgba(143, 231, 255, 0.08);
+    }
+
+    .grid {
+      margin-top: 16px;
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 14px;
+    }
+
+    .card {
+      grid-column: span 12;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+      box-shadow: var(--shadow);
+    }
+
+    .card.half { grid-column: span 6; }
+    .card.third { grid-column: span 4; }
+
+    h2 {
+      margin: 0 0 10px;
+      font-size: 18px;
+      color: var(--accent);
+    }
+
+    h3 {
+      margin: 14px 0 8px;
+      font-size: 15px;
+      color: #d7ecff;
+    }
+
+    ul {
+      margin: 8px 0 0 18px;
+      padding: 0;
+    }
+
+    li { margin: 4px 0; }
+
+    .kpi {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .pill {
+      background: var(--panel-soft);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px;
+      text-align: center;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .pill strong {
+      display: block;
+      color: var(--text);
+      font-size: 16px;
+    }
+
+    .tag {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--muted);
+      margin-right: 6px;
+      margin-bottom: 6px;
+    }
+
+    .ok { color: var(--ok); }
+    .warn { color: var(--warn); }
+    .danger { color: var(--danger); }
+
+    .steps {
+      counter-reset: s;
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: 10px;
+    }
+
+    .steps li {
+      counter-increment: s;
+      background: var(--panel-soft);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px 10px 42px;
+      position: relative;
+      margin: 0;
+    }
+
+    .steps li::before {
+      content: counter(s);
+      position: absolute;
+      left: 10px;
+      top: 10px;
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      background: rgba(143, 231, 255, 0.2);
+      border: 1px solid rgba(143, 231, 255, 0.55);
+      display: grid;
+      place-items: center;
+      font-size: 12px;
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .footer-note {
+      margin-top: 16px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    @media (max-width: 980px) {
+      .card.half, .card.third { grid-column: span 12; }
+      .kpi { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="hero">
+      <h1>Ayuda completa · CEIBO Router V3</h1>
+      <p class="subtitle">Guía práctica en español para planificar rutas, analizar meteo, gestionar fondeos con fotos y exportar reportes.</p>
+      <p class="subtitle"><strong>Programa creado por Max Patissier.</strong></p>
+      <nav class="toc" aria-label="Índice rápido">
+        <a href="#routes">Routes</a>
+        <a href="#routage">Routage</a>
+        <a href="#arrivee">Arrivée</a>
+        <a href="#waypoint">Waypoint</a>
+        <a href="#flujo">Flujo</a>
+        <a href="#problemas">Problemas</a>
+      </nav>
+      <div class="kpi">
+        <div class="pill"><strong>4</strong>Pestañas principales</div>
+        <div class="pill"><strong>Meteo</strong>Viento, presión, ola, ETA</div>
+        <div class="pill"><strong>Fotos</strong>Fondeos geolocalizados</div>
+        <div class="pill"><strong>GPX/PDF</strong>Importar y exportar</div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="card half" id="routes">
+        <h2>1) Pestaña ROUTES</h2>
+        <span class="tag">Guardar</span>
+        <span class="tag">Cargar</span>
+        <span class="tag">Importar JSON/GPX</span>
+        <span class="tag">Exportar PDF</span>
+        <ul>
+          <li><strong>Guardar:</strong> crea o actualiza la ruta activa.</li>
+          <li><strong>Cargar:</strong> abre una ruta guardada y la coloca en mapa.</li>
+          <li><strong>Exportar / Exportar GPX:</strong> descarga en JSON o GPX.</li>
+          <li><strong>Importar:</strong> admite archivos JSON y GPX.</li>
+          <li><strong>Medición NM:</strong> activa modo de medición manual sobre el mapa.</li>
+        </ul>
+      </article>
+
+      <article class="card half" id="routage">
+        <h2>2) Pestaña ROUTAGE</h2>
+        <span class="tag">Calcular</span>
+        <span class="tag">Sugerir salida</span>
+        <span class="tag">Evitar costa</span>
+        <span class="tag">Velas</span>
+        <ul>
+          <li>Configura fecha/hora de salida, modo de velas y tiempo de bordada.</li>
+          <li><strong>Calcular:</strong> genera ruta con meteo por segmentos.</li>
+          <li><strong>Sugerencia salida:</strong> busca ventanas con viento útil y límite de seguridad.</li>
+          <li>Si haces clic en la ruta, inserta un waypoint intermedio lógicamente.</li>
+          <li>Arrastrar un WP actualiza la ruta (sin reinicio completo).</li>
+        </ul>
+      </article>
+
+      <article class="card half" id="arrivee">
+        <h2>3) Pestaña ARRIVÉE</h2>
+        <span class="tag">Mouillage</span>
+        <span class="tag">POI</span>
+        <span class="tag">Recomendación</span>
+        <ul>
+          <li>Analiza zona de llegada con recomendaciones de fondeo.</li>
+          <li>Incluye restaurantes y tiendas cercanas (datos OSM/Overpass).</li>
+          <li>Un clic en “usar como WP final” reemplaza el destino final de la ruta.</li>
+        </ul>
+      </article>
+
+      <article class="card half" id="waypoint">
+        <h2>4) Pestaña WAYPOINT (fotos)</h2>
+        <span class="tag">EXIF GPS</span>
+        <span class="tag">Mapa editable</span>
+        <span class="tag">Valoración</span>
+        <span class="tag">Y aller</span>
+        <ul>
+          <li>Sube foto de fondeo y lee coordenadas GPS si existen.</li>
+          <li>Si no hay GPS, define posición manual en mini mapa.</li>
+          <li>Rellena nombre del lugar, comentario, nota, profundidad y protección.</li>
+          <li>La ficha aparece en lista y también en el mapa principal.</li>
+          <li>Botón <strong>Y aller</strong>: añade ese lugar como WP de ruta.</li>
+        </ul>
+      </article>
+
+      <article class="card third" id="flujo">
+        <h2>Flujo recomendado</h2>
+        <ol class="steps">
+          <li>Crear WP base en mapa (origen y destino).</li>
+          <li>Calcular ruta inicial.</li>
+          <li>Ajustar WP manuales y recalcular.</li>
+          <li>Guardar ruta con nombre claro.</li>
+          <li>Exportar GPX/PDF si hace falta.</li>
+        </ol>
+      </article>
+
+      <article class="card third">
+        <h2>Consejos meteo</h2>
+        <ul>
+          <li class="ok">Usa ventanas con viento estable y olas moderadas.</li>
+          <li class="warn">Si hay fallback meteo, revisa antes de zarpar.</li>
+          <li class="danger">Evita tramos largos sin revisar evolución.</li>
+          <li>En rutas largas, CEIBO añade WP automáticos para refinar meteo.</li>
+        </ul>
+      </article>
+
+      <article class="card third" id="problemas">
+        <h2>Resolución de problemas</h2>
+        <ul>
+          <li><strong>No guarda foto:</strong> prueba JPG más ligero.</li>
+          <li><strong>No aparece icono:</strong> usa “Ver en mapa” desde la ficha.</li>
+          <li><strong>Error red meteo:</strong> vuelve a intentar en 10–20 s.</li>
+          <li><strong>Ruta rara:</strong> añade WP manuales y recalcula.</li>
+        </ul>
+      </article>
+    </section>
+
+    <p class="footer-note">
+      CEIBO Router es una ayuda a la decisión. Verifica siempre cartas, avisos a navegantes y pronóstico oficial antes de navegar. <strong>Creación de Max Patissier.</strong>
+    </p>
+  </main>
+</body>
+</html>

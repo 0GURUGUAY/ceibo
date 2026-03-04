@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CEIBO Router</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/jpeg" href="ceibo-favicon.jpg">
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+    <link rel="stylesheet" href="style.css"/>
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+</head>
+<body>
+
+<div id="sidebar">
+    <h2>CEIBO Router</h2>
+
+    <label for="dateInput" style="display: block; margin-top: 10px; font-size: 12px;">Date de départ:</label>
+    <input type="date" id="dateInput" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
+
+    <label for="timeInput" style="display: block; margin-top: 10px; font-size: 12px;">Heure de départ:</label>
+    <input type="time" id="timeInput" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
+
+        <label for="routeNameInput" style="display: block; margin-top: 10px; font-size: 12px;">Nom de la route:</label>
+        <input type="text" id="routeNameInput" placeholder="Nom de la route" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
+
+        <div style="display:flex; gap:8px; margin-top:8px;">
+            <button id="saveRouteBtn" style="flex:1;">Sauvegarder</button>
+            <button id="exportRouteBtn" style="flex:1;">Exporter</button>
+            <button id="exportRouteGpxBtn" style="flex:1;">Exporter GPX</button>
+        </div>
+
+        <label for="savedRoutesSelect" style="display: block; margin-top: 12px; font-size: 12px;">Routes sauvegardées:</label>
+        <select id="savedRoutesSelect" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;"></select>
+
+        <div style="display:flex; gap:8px; margin-top:8px;">
+            <button id="loadRouteBtn" style="flex:1;">Charger</button>
+            <button id="deleteRouteBtn" style="flex:1;">Supprimer</button>
+        </div>
+
+        <label for="importRouteInput" style="display: block; margin-top: 12px; font-size: 12px;">Importer (JSON / GPX):</label>
+        <input type="file" id="importRouteInput" accept=".json,.gpx,application/json,application/gpx+xml,text/xml,application/xml" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
+
+    <label for="tackingTimeInput" style="display: block; margin-top: 10px; font-size: 12px;">Temps du bord (min):</label>
+    <select id="tackingTimeInput" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
+        <option value="0.25">15 minutes</option>
+        <option value="0.33">20 minutes</option>
+        <option value="0.5" selected>30 minutes</option>
+        <option value="0.75">45 minutes</option>
+        <option value="1">1 heure</option>
+        <option value="1.5">1.5 heures</option>
+        <option value="2">2 heures</option>
+    </select>
+
+    <button id="computeBtn">Compute Route</button>
+    <button id="resetBtn">Reset</button>
+
+    <div id="waypointWeatherInfo"></div>
+    <div id="info"></div>
+    <div id="windSpeedLegend"></div>
+</div>
+
+<div id="map"></div>
+
+<script type="module" src="app.js"></script>
+
+</body>
+</html>

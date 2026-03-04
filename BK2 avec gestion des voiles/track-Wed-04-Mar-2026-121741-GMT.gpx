@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+        <gpx creator="Windy.com" version="1.1" xmlns="http://www.topografix.com/GPX/1/1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
+            <rte>
+                <name>Windy.com track-Wed-04-Mar-2026-121741-GMT.gpx</name>
+                <rtept lat="36.8224" lon="-2.488900000000058">
+                                <name>1</name>
+                            </rtept><rtept lat="36.6913" lon="-2.164600000000064">
+                                <name>2</name>
+                            </rtept><rtept lat="37.5211" lon="-0.720299999999952">
+                                <name>3</name>
+                            </rtept><rtept lat="39.0481" lon="1.2206999999999653">
+                                <name>4</name>
+                            </rtept><rtept lat="39.1433" lon="1.539700000000039">
+                                <name>5</name>
+                            </rtept><rtept lat="39.0171" lon="1.677699999999959">
+                                <name>6</name>
+                            </rtept><rtept lat="38.908" lon="1.4320000000000164">
+                                <name>7</name>
+                            </rtept><rtept lat="38.6357" lon="1.348700000000008">
+                                <name>8</name>
+                            </rtept><rtept lat="38.639" lon="1.4375">
+                                <name>9</name>
+                            </rtept><rtept lat="38.6468" lon="1.607499999999959">
+                                <name>10</name>
+                            </rtept><rtept lat="39.15" lon="2.9329999999999927">
+                                <name>11</name>
+                            </rtept><rtept lat="39.568" lon="2.6499999999999773">
+                                <name>12</name>
+                            </rtept><rtept lat="39.381" lon="2.5054000000000087">
+                                <name>13</name>
+                            </rtept><rtept lat="39.6578" lon="2.246599999999944">
+                                <name>14</name>
+                            </rtept><rtept lat="40.0115" lon="3.1475000000000364">
+                                <name>15</name>
+                            </rtept><rtept lat="40.088" lon="3.9098999999999933">
+                                <name>16</name>
+                            </rtept><rtept lat="40.0864" lon="4.213600000000042">
+                                <name>17</name>
+                            </rtept><rtept lat="39.9146" lon="4.3460999999999785">
+                                <name>18</name>
+                            </rtept><rtept lat="42.9956" lon="6.458100000000059">
+                                <name>19</name>
+                            </rtept><rtept lat="43.58" lon="7.125">
+                                <name>20</name>
+                            </rtept>
+            </rte>
+        </gpx>

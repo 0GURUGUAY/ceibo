@@ -1,0 +1,106 @@
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+}
+
+body {
+    display: flex;
+    height: 100%;
+    font-family: Arial, sans-serif;
+    overflow: hidden;
+}
+
+#sidebar {
+    width: 500px;
+    background: #111;
+    color: white;
+    padding: 15px;
+    overflow-y: auto;
+    flex-shrink: 0;
+}
+
+#map {
+    flex: 1;
+    height: 100%;
+}
+
+button {
+    width: 100%;
+    padding: 8px 10px;
+    margin-top: 8px;
+    background: #ff7b00;
+    border: 1px solid #e56f00;
+    border-radius: 10px;
+    color: white;
+    font-weight: 600;
+    font-size: 13px;
+    letter-spacing: 0.2px;
+    cursor: pointer;
+    transition: transform 120ms ease, box-shadow 160ms ease, background-color 160ms ease;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+}
+
+button:hover {
+    background: #ff8a1f;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.22);
+}
+
+button:active {
+    transform: translateY(1px);
+}
+
+button:focus-visible {
+    outline: 2px solid rgba(255, 123, 0, 0.35);
+    outline-offset: 1px;
+}
+
+#waypointWeatherInfo {
+    margin-top: 10px;
+    padding: 10px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.wind-direction-waypoint {
+    background: transparent;
+    border: none;
+}
+
+.wind-direction-waypoint__arrow {
+    width: 16px;
+    height: 16px;
+    border-radius: 999px;
+    background: rgba(17, 17, 17, 0.85);
+    color: #57c7ff;
+    font-size: 11px;
+    line-height: 16px;
+    text-align: center;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+
+#windSpeedLegend {
+    margin-top: 10px;
+    padding: 10px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    font-size: 12px;
+}
+
+.wind-legend-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+}
+
+.wind-legend-swatch {
+    width: 14px;
+    height: 6px;
+    border-radius: 999px;
+    display: inline-block;
+}

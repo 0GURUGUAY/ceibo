@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="CEIBO Router" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>test</name>
+  </metadata>
+  <rte>
+    <name>test</name>
+    <rtept lat="41.275742324160106" lon="2.1780395507812504"></rtept>
+    <rtept lat="40.13269100586688" lon="3.8342285156250004"></rtept>
+    <rtept lat="40.09908414736847" lon="4.292907714843751"></rtept>
+    <rtept lat="39.810645900839134" lon="4.358825683593751"></rtept>
+  </rte>
+</gpx>

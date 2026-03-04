@@ -1,0 +1,3177 @@
+import { routeSegment, distanceNm, getBearing, computeTWA, movePoint } from './polarRouter.js';
+import { feature as topojsonFeature } from 'https://cdn.jsdelivr.net/npm/topojson-client@3/+esm';
+
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+    iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+    iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+    shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png'
+});
+
+let map;
+let standardTileLayer;
+let satelliteTileLayer;
+let activeBaseLayer;
+let baseLayerControl;
+let routePoints = [];
+let markers = [];
+let routeLayer = null;
+let windLayer = null;
+let departureDate = new Date().toISOString().split('T')[0];
+let departureTime = "12:00";
+let tackingTimeHours = 0.5;
+let sailMode = 'auto';
+const weatherCache = new Map();
+let lastWeatherUpdateAt = null;
+let waypointWindDirectionLayers = [];
+let waveDirectionSegmentLayers = [];
+let waypointPassageSlots = new Map();
+let lastRouteBounds = null;
+let generatedWaypointMarkers = [];
+let measureModeEnabled = false;
+let measurePoints = [];
+let measurePolylineLayer = null;
+let measurePointLayers = [];
+let measureLabelLayers = [];
+let lastComputedReportData = null;
+let forecastWindowDays = 3;
+let arrivalPoiMarkers = [];
+let lastDepartureSuggestion = null;
+let selectedUserWaypointIndex = -1;
+let currentLoadedRouteIndex = -1;
+const MOTOR_WIND_THRESHOLD_KN = 5;
+const MOTOR_SPEED_KN = 7;
+const RECOMMENDED_MAX_WIND_KN = 20;
+const OVERPASS_URLS = [
+    'https://overpass.kumi.systems/api/interpreter',
+    'https://overpass.private.coffee/api/interpreter',
+    'https://overpass-api.de/api/interpreter'
+];
+const OVERPASS_MIN_INTERVAL_MS = 900;
+const OVERPASS_CACHE_TTL_MS = 8 * 60 * 1000;
+const OVERPASS_429_COOLDOWN_MS = 10 * 60 * 1000;
+let overpassLastRequestAt = 0;
+const overpassQueryCache = new Map();
+const overpassEndpointCooldownUntil = new Map();
+let overpassPreferredEndpoint = OVERPASS_URLS[0];
+const MAP_STYLE_STORAGE_KEY = 'ceiboMapStyle';
+const STRONG_WAVE_THRESHOLD_M = 1.8;
+const LAND_DATA_SOURCES = [
+    {
+        url: 'https://cdn.jsdelivr.net/npm/world-atlas@2/land-50m.json',
+        objectName: 'land'
+    },
+    {
+        url: 'https://cdn.jsdelivr.net/npm/world-atlas@2/land-110m.json',
+        objectName: 'land'
+    }
+];
+const COASTAL_CLEARANCE_NM = 5;
+const AUTO_WP_MIN_SPACING_NM = 10;
+const AUTO_WP_MAX_INTERMEDIATE = 24;
+let autoWpMinSpacingNm = null;
+
+let landGeometry = null;
+
+function normalizeHourTime(timeValue) {
+    const hour = String(parseInt(String(timeValue || '12:00').split(':')[0], 10) || 12).padStart(2, '0');
+    return `${hour}:00`;
+}
+
+function updateDepartureDateTimeInput() {
+    const input = document.getElementById('departureDateTimeInput');
+    if (!input) return;
+    input.value = `${departureDate}T${normalizeHourTime(departureTime)}`;
+}
+
+function setDepartureFromDateTimeInput(rawValue) {
+    if (!rawValue || !rawValue.includes('T')) return;
+    const [datePart, timePart] = rawValue.split('T');
+    if (datePart) departureDate = datePart;
+    departureTime = normalizeHourTime(timePart || '12:00');
+    updateDepartureDateTimeInput();
+}
+
+function normalizeMapStyle(value) {
+    return value === 'satellite' ? 'satellite' : 'standard';
+}
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+}
+
+function toLocalDateTimeInputValue(dateObj) {
+    if (!(dateObj instanceof Date) || Number.isNaN(dateObj.getTime())) return '';
+    const year = dateObj.getFullYear();
+    const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const day = String(dateObj.getDate()).padStart(2, '0');
+    const hour = String(dateObj.getHours()).padStart(2, '0');
+    return `${year}-${month}-${day}T${hour}:00`;
+}
+
+function applyLastDepartureSuggestion() {
+    if (!lastDepartureSuggestion?.departureDateTime) return;
+    const inputValue = toLocalDateTimeInputValue(lastDepartureSuggestion.departureDateTime);
+    if (!inputValue) return;
+    setDepartureFromDateTimeInput(inputValue);
+}
+
+function updateSelectedWaypointInfo() {
+    const info = document.getElementById('selectedWpInfo');
+    if (!info) return;
+
+    if (!Number.isInteger(selectedUserWaypointIndex) || selectedUserWaypointIndex < 0 || selectedUserWaypointIndex >= markers.length) {
+        info.textContent = 'WP sélectionné: aucun · clic sur WP pour sélectionner · clic droit pour supprimer';
+        return;
+    }
+
+    const marker = markers[selectedUserWaypointIndex];
+    const latlng = marker?.getLatLng?.();
+    if (!latlng) {
+        info.textContent = 'WP sélectionné: aucun · clic sur WP pour sélectionner · clic droit pour supprimer';
+        return;
+    }
+
+    info.textContent = `WP sélectionné: ${selectedUserWaypointIndex + 1} (${latlng.lat.toFixed(4)}, ${latlng.lng.toFixed(4)})`;
+}
+
+function invalidateComputedRouteDisplay() {
+    if (routeLayer && map?.hasLayer(routeLayer)) {
+        map.removeLayer(routeLayer);
+    }
+    routeLayer = null;
+
+    if (windLayer && map?.hasLayer(windLayer)) {
+        map.removeLayer(windLayer);
+    }
+    windLayer = null;
+
+    clearWaypointWindDirectionLayers();
+    clearWaveDirectionSegmentLayers();
+    waypointPassageSlots.clear();
+    lastRouteBounds = null;
+
+    const info = document.getElementById('info');
+    if (info) info.innerHTML = '';
+    const windLegend = document.getElementById('windSpeedLegend');
+    if (windLegend) windLegend.innerHTML = '';
+}
+
+function selectUserWaypoint(marker) {
+    const index = markers.indexOf(marker);
+    selectedUserWaypointIndex = index;
+    updateSelectedWaypointInfo();
+}
+
+function deleteUserWaypointAtIndex(index) {
+    if (!Number.isInteger(index) || index < 0 || index >= markers.length) return;
+
+    const marker = markers[index];
+    if (marker && map?.hasLayer(marker)) {
+        map.removeLayer(marker);
+    }
+
+    markers.splice(index, 1);
+    routePoints.splice(index, 1);
+
+    if (selectedUserWaypointIndex === index) {
+        selectedUserWaypointIndex = -1;
+    } else if (selectedUserWaypointIndex > index) {
+        selectedUserWaypointIndex -= 1;
+    }
+
+    invalidateComputedRouteDisplay();
+    updateSelectedWaypointInfo();
+}
+
+function getLogicalInsertionIndexFromRouteClick(clickLatLng) {
+    if (!Array.isArray(routePoints) || routePoints.length < 2) return routePoints.length;
+    if (!clickLatLng || !map) return routePoints.length;
+
+    const clickPoint = map.latLngToLayerPoint(clickLatLng);
+    let bestIndex = routePoints.length;
+    let bestDistance = Number.POSITIVE_INFINITY;
+
+    for (let i = 0; i < routePoints.length - 1; i += 1) {
+        const a = routePoints[i];
+        const b = routePoints[i + 1];
+        if (!a || !b) continue;
+
+        const aPt = map.latLngToLayerPoint(a);
+        const bPt = map.latLngToLayerPoint(b);
+        const distancePx = L.LineUtil.pointToSegmentDistance(clickPoint, aPt, bPt);
+
+        if (distancePx < bestDistance) {
+            bestDistance = distancePx;
+            bestIndex = i + 1;
+        }
+    }
+
+    return bestIndex;
+}
+
+function addUserWaypoint(latlng, options = {}) {
+    if (!latlng || !Number.isFinite(latlng.lat) || !Number.isFinite(latlng.lng)) return null;
+
+    const { select = true, invalidate = true, insertIndex = null } = options;
+
+    const hasValidInsertIndex = Number.isInteger(insertIndex) && insertIndex >= 0 && insertIndex <= routePoints.length;
+    const targetIndex = hasValidInsertIndex ? insertIndex : routePoints.length;
+
+    routePoints.splice(targetIndex, 0, latlng);
+    const marker = createWaypointMarker(latlng);
+    markers.splice(targetIndex, 0, marker);
+
+    if (select) {
+        selectUserWaypoint(marker);
+    } else {
+        updateSelectedWaypointInfo();
+    }
+
+    if (invalidate) {
+        invalidateComputedRouteDisplay();
+    }
+
+    return marker;
+}
+
+function getArrivalReferenceDateTime() {
+    if (lastComputedReportData?.arrivalIso) {
+        const fromReport = new Date(lastComputedReportData.arrivalIso);
+        if (!Number.isNaN(fromReport.getTime())) return fromReport;
+    }
+
+    return new Date(`${departureDate}T${departureTime}:00`);
+}
+
+function clearArrivalPoiMarkers() {
+    arrivalPoiMarkers.forEach(marker => {
+        if (map?.hasLayer(marker)) map.removeLayer(marker);
+    });
+    arrivalPoiMarkers = [];
+}
+
+function addArrivalPoiMarker(lat, lng, label, type = 'poi') {
+    if (!map || !Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+    const marker = L.circleMarker([lat, lng], {
+        radius: type === 'anchorage' ? 6 : 4,
+        color: type === 'anchorage' ? '#7fd8ff' : '#ffcf6a',
+        weight: 2,
+        fillColor: type === 'anchorage' ? '#133341' : '#3a2a13',
+        fillOpacity: 0.9
+    }).addTo(map);
+
+    marker.bindPopup(`<strong>${escapeHtml(label)}</strong>`, { maxWidth: 260, autoPan: false });
+    arrivalPoiMarkers.push(marker);
+    return marker;
+}
+
+function elementToPoint(element) {
+    const lat = Number(element?.lat ?? element?.center?.lat);
+    const lon = Number(element?.lon ?? element?.center?.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    return { lat, lon, tags: element?.tags || {} };
+}
+
+function getPoiLabel(point, fallback) {
+    return point?.tags?.name || fallback;
+}
+
+async function fetchOverpassElements(query) {
+    const normalizedQuery = String(query || '').trim();
+    if (!normalizedQuery) return [];
+
+    const cached = overpassQueryCache.get(normalizedQuery);
+    if (cached && (Date.now() - cached.ts) < OVERPASS_CACHE_TTL_MS) {
+        return cached.elements;
+    }
+
+    let lastError = null;
+
+    const now = Date.now();
+    const orderedEndpoints = [
+        overpassPreferredEndpoint,
+        ...OVERPASS_URLS.filter(url => url !== overpassPreferredEndpoint)
+    ];
+
+    for (const endpoint of orderedEndpoints) {
+        const blockedUntil = overpassEndpointCooldownUntil.get(endpoint) || 0;
+        if (blockedUntil > now) continue;
+
+        try {
+            const requestNow = Date.now();
+            const waitMs = Math.max(0, OVERPASS_MIN_INTERVAL_MS - (requestNow - overpassLastRequestAt));
+            if (waitMs > 0) {
+                await new Promise(resolve => setTimeout(resolve, waitMs));
+            }
+
+            const body = new URLSearchParams({ data: normalizedQuery }).toString();
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                body
+            });
+            overpassLastRequestAt = Date.now();
+
+            const text = await response.text();
+            if (!response.ok) {
+                if (response.status === 429) {
+                    overpassEndpointCooldownUntil.set(endpoint, Date.now() + OVERPASS_429_COOLDOWN_MS);
+                    await new Promise(resolve => setTimeout(resolve, 1200));
+                }
+                lastError = new Error(`Overpass HTTP ${response.status}`);
+                continue;
+            }
+
+            let data = null;
+            try {
+                data = JSON.parse(text);
+            } catch (_parseError) {
+                lastError = new Error('Overpass JSON invalide');
+                continue;
+            }
+
+            const elements = Array.isArray(data?.elements) ? data.elements : [];
+            overpassPreferredEndpoint = endpoint;
+            overpassQueryCache.set(normalizedQuery, {
+                ts: Date.now(),
+                elements
+            });
+            return elements;
+        } catch (error) {
+            lastError = error;
+        }
+    }
+
+    throw lastError || new Error('Overpass indisponible');
+}
+
+async function fetchNearbyAnchorages(lat, lon, radiusM = 18000) {
+    const query = `
+        [out:json][timeout:25];
+        (
+          node(around:${radiusM},${lat},${lon})["seamark:type"="anchorage"];
+          way(around:${radiusM},${lat},${lon})["seamark:type"="anchorage"];
+          relation(around:${radiusM},${lat},${lon})["seamark:type"="anchorage"];
+          node(around:${radiusM},${lat},${lon})["leisure"="marina"];
+          way(around:${radiusM},${lat},${lon})["leisure"="marina"];
+        );
+        out center tags;
+    `;
+
+    const elements = await fetchOverpassElements(query);
+    return elements
+        .map(elementToPoint)
+        .filter(Boolean)
+        .map((point, idx) => ({
+            ...point,
+            name: getPoiLabel(point, `Mouillage ${idx + 1}`),
+            distanceNm: distanceNm(lat, lon, point.lat, point.lon)
+        }))
+        .sort((a, b) => a.distanceNm - b.distanceNm)
+        .slice(0, 12);
+}
+
+async function fetchNearbyAmenityList(lat, lon, kind = 'restaurant', radiusM = 6000) {
+    const filter = kind === 'shop'
+        ? '"shop"~"supermarket|convenience|greengrocer|bakery|butcher"'
+        : '"amenity"~"restaurant|fast_food|cafe"';
+
+    const query = `
+        [out:json][timeout:25];
+        (
+          node(around:${radiusM},${lat},${lon})[${filter}];
+          way(around:${radiusM},${lat},${lon})[${filter}];
+        );
+        out center tags;
+    `;
+
+    const elements = await fetchOverpassElements(query);
+    return elements
+        .map(elementToPoint)
+        .filter(Boolean)
+        .map((point, idx) => ({
+            ...point,
+            name: getPoiLabel(point, kind === 'shop' ? `Magasin ${idx + 1}` : `Restaurant ${idx + 1}`),
+            distanceNm: distanceNm(lat, lon, point.lat, point.lon)
+        }))
+        .sort((a, b) => a.distanceNm - b.distanceNm)
+        .slice(0, 8);
+}
+
+async function scoreAnchoragesForArrival(anchorages, arrivalDateTime) {
+    const arrivalSlot = toDateAndHourUtc(arrivalDateTime);
+
+    const scored = [];
+    for (const anchorage of anchorages) {
+        const weather = await getWeatherAtDateHour(anchorage.lat, anchorage.lon, arrivalSlot.date, arrivalSlot.hour);
+        const wind = Number.isFinite(weather?.windSpeed) ? weather.windSpeed : 12;
+        const wave = Number.isFinite(weather?.waveHeight) ? weather.waveHeight : 0.8;
+
+        const penalty =
+            anchorage.distanceNm * 3 +
+            Math.max(0, wind - RECOMMENDED_MAX_WIND_KN) * 25 +
+            Math.abs(wind - 12) * 0.8 +
+            Math.max(0, wave - 1.6) * 10;
+
+        scored.push({
+            ...anchorage,
+            weather,
+            score: penalty,
+            confidence: wind <= 20 && wave <= 1.8 ? 'élevée' : (wind <= 24 ? 'moyenne' : 'prudence')
+        });
+    }
+
+    return scored.sort((a, b) => a.score - b.score).slice(0, 3);
+}
+
+function renderNearbyList(containerId, items, emptyText) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    if (!Array.isArray(items) || items.length === 0) {
+        container.innerHTML = `<div class="arrival-list__item">${escapeHtml(emptyText)}</div>`;
+        return;
+    }
+
+    container.innerHTML = `<div class="arrival-list">${items.map(item =>
+        `<div class="arrival-list__item"><strong>${escapeHtml(item.name)}</strong><br>${item.distanceNm.toFixed(2)} nm</div>`
+    ).join('')}</div>`;
+}
+
+function applyAnchorageAsFinalWaypoint(anchorage) {
+    if (!anchorage || !Number.isFinite(anchorage.lat) || !Number.isFinite(anchorage.lon)) return;
+
+    const latlng = L.latLng(anchorage.lat, anchorage.lon);
+    if (routePoints.length === 0) {
+        routePoints.push(latlng);
+        const marker = createWaypointMarker(latlng);
+        markers.push(marker);
+    } else {
+        const lastIndex = routePoints.length - 1;
+        routePoints[lastIndex] = latlng;
+        const lastMarker = markers[lastIndex];
+        if (lastMarker) {
+            lastMarker.setLatLng(latlng);
+        } else {
+            const marker = createWaypointMarker(latlng);
+            markers[lastIndex] = marker;
+        }
+    }
+
+    map.panTo(latlng, { animate: true, duration: 0.45 });
+}
+
+function renderAnchorageRecommendations(recommendations) {
+    const container = document.getElementById('anchorageRecommendations');
+    if (!container) return;
+
+    if (!Array.isArray(recommendations) || recommendations.length === 0) {
+        container.innerHTML = '<div class="arrival-card">Aucun mouillage recommandé trouvé.</div>';
+        return;
+    }
+
+    container.innerHTML = recommendations.map((item, index) => {
+        const wind = Number.isFinite(item?.weather?.windSpeed) ? `${item.weather.windSpeed.toFixed(1)} kn` : 'N/A';
+        const wave = Number.isFinite(item?.weather?.waveHeight) ? `${item.weather.waveHeight.toFixed(1)} m` : 'N/A';
+        return `
+            <div class="arrival-card">
+                <div class="arrival-card__head">
+                    <span>#${index + 1} ${escapeHtml(item.name)}</span>
+                    <span>${item.distanceNm.toFixed(2)} nm</span>
+                </div>
+                <div>Vent ETA: ${wind} · Houle ETA: ${wave} · Confiance: ${escapeHtml(item.confidence)}</div>
+                <button type="button" class="apply-anchorage-btn" data-anch-index="${index}">Utiliser comme WP final</button>
+            </div>
+        `;
+    }).join('');
+
+    const buttons = container.querySelectorAll('.apply-anchorage-btn');
+    buttons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const idx = Number(btn.getAttribute('data-anch-index'));
+            const selected = recommendations[idx];
+            if (selected) applyAnchorageAsFinalWaypoint(selected);
+        });
+    });
+}
+
+async function analyzeArrivalZone() {
+    if (routePoints.length < 2) {
+        alert('Ajoute au moins 2 waypoints pour analyser la zone d\'arrivée.');
+        return;
+    }
+
+    const button = document.getElementById('analyzeArrivalBtn');
+    const summary = document.getElementById('arrivalSummary');
+    if (button) {
+        button.disabled = true;
+        button.textContent = 'Analyse en cours...';
+    }
+    if (summary) summary.textContent = 'Analyse mouillage: récupération des données...';
+
+    clearArrivalPoiMarkers();
+
+    try {
+        const destination = routePoints[routePoints.length - 1];
+        const arrivalTime = getArrivalReferenceDateTime();
+
+        const anchorages = await fetchNearbyAnchorages(destination.lat, destination.lng);
+        const restaurants = await fetchNearbyAmenityList(destination.lat, destination.lng, 'restaurant');
+        const shops = await fetchNearbyAmenityList(destination.lat, destination.lng, 'shop');
+
+        const recommendations = await scoreAnchoragesForArrival(anchorages, arrivalTime);
+
+        recommendations.forEach(item => addArrivalPoiMarker(item.lat, item.lon, item.name, 'anchorage'));
+        restaurants.forEach(item => addArrivalPoiMarker(item.lat, item.lon, item.name, 'restaurant'));
+        shops.forEach(item => addArrivalPoiMarker(item.lat, item.lon, item.name, 'shop'));
+
+        renderAnchorageRecommendations(recommendations);
+        renderNearbyList('nearbyRestaurants', restaurants, 'Aucun restaurant proche trouvé');
+        renderNearbyList('nearbyShops', shops, 'Aucun magasin proche trouvé');
+
+        if (summary) {
+            if (recommendations.length) {
+                summary.innerHTML = `<strong>Top mouillage:</strong> ${escapeHtml(recommendations[0].name)} · ${recommendations[0].distanceNm.toFixed(2)} nm de l'arrivée`;
+            } else {
+                summary.textContent = 'Analyse mouillage: aucun mouillage adapté trouvé à proximité.';
+            }
+        }
+    } catch (_error) {
+        if (summary) summary.textContent = 'Analyse mouillage: erreur de récupération des données.';
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.textContent = 'Conseiller mouillage à l\'arrivée';
+        }
+    }
+}
+
+function formatDurationHours(totalHours) {
+    if (!Number.isFinite(totalHours)) return 'N/A';
+    const hours = Math.floor(totalHours);
+    const minutes = Math.round((totalHours - hours) * 60);
+    if (hours <= 0) return `${minutes} min`;
+    return `${hours} h ${String(minutes).padStart(2, '0')}`;
+}
+
+function getWeatherFavorabilityPenalty(weather) {
+    const wind = Number(weather?.windSpeed);
+    const wave = Number(weather?.waveHeight);
+    const precip = Number(weather?.precipitation);
+
+    let penalty = 0;
+    if (Number.isFinite(wind)) {
+        if (wind > RECOMMENDED_MAX_WIND_KN) penalty += (wind - RECOMMENDED_MAX_WIND_KN) * 20;
+        penalty += Math.abs(wind - 12) * 0.9;
+    } else {
+        penalty += 8;
+    }
+
+    if (Number.isFinite(wave)) {
+        if (wave > 2.5) penalty += (wave - 2.5) * 12;
+        else penalty += wave * 2;
+    }
+
+    if (Number.isFinite(precip)) penalty += precip * 2.5;
+    return penalty;
+}
+
+async function estimateRouteForDeparture(departureDateTime) {
+    if (!Array.isArray(routePoints) || routePoints.length < 2) return null;
+
+    let totalTimeHours = 0;
+    let maxWind = 0;
+
+    for (let i = 0; i < routePoints.length - 1; i++) {
+        const start = { lat: routePoints[i].lat, lon: routePoints[i].lng };
+        const end = { lat: routePoints[i + 1].lat, lon: routePoints[i + 1].lng };
+        const legPoints = [start, end];
+
+        for (let legIndex = 0; legIndex < legPoints.length - 1; legIndex++) {
+            const legStart = legPoints[legIndex];
+            const legEnd = legPoints[legIndex + 1];
+
+            const passageDateTime = new Date(departureDateTime.getTime() + totalTimeHours * 3600 * 1000);
+            const passageSlot = toDateAndHourUtc(passageDateTime);
+            const weather = await getWeatherAtDateHour(legStart.lat, legStart.lon, passageSlot.date, passageSlot.hour);
+
+            const windSpeed = Number.isFinite(weather?.windSpeed) ? weather.windSpeed : 10;
+            const windDirection = Number.isFinite(weather?.windDirection) ? weather.windDirection : 0;
+            maxWind = Math.max(maxWind, windSpeed);
+
+            const isMotorSegment = windSpeed < MOTOR_WIND_THRESHOLD_KN;
+            const rawSegment = isMotorSegment
+                ? {
+                    distance: distanceNm(legStart.lat, legStart.lon, legEnd.lat, legEnd.lon),
+                    speed: MOTOR_SPEED_KN,
+                    bearing: getBearing(legStart, legEnd),
+                    timeHours: distanceNm(legStart.lat, legStart.lon, legEnd.lat, legEnd.lon) / MOTOR_SPEED_KN,
+                    type: 'motor'
+                }
+                : routeSegment(legStart, legEnd, windDirection, windSpeed, tackingTimeHours);
+
+            const twa = isMotorSegment ? null : computeTWA(rawSegment.bearing, windDirection);
+            const sailSetup = getSailRecommendation({
+                isMotorSegment,
+                tws: windSpeed,
+                twa,
+                sailModeValue: sailMode
+            });
+
+            const sailFactor = getSailPerformanceFactor({
+                isMotorSegment,
+                sailModeValue: sailMode,
+                tws: windSpeed,
+                twa,
+                sailSetup
+            });
+
+            const timeHours = isMotorSegment ? rawSegment.timeHours : rawSegment.timeHours / sailFactor;
+            totalTimeHours += timeHours;
+        }
+    }
+
+    const departureSlot = toDateAndHourUtc(departureDateTime);
+    const arrivalDateTime = new Date(departureDateTime.getTime() + totalTimeHours * 3600 * 1000);
+    const arrivalSlot = toDateAndHourUtc(arrivalDateTime);
+
+    const departureWeather = await getWeatherAtDateHour(
+        routePoints[0].lat,
+        routePoints[0].lng,
+        departureSlot.date,
+        departureSlot.hour
+    );
+
+    const arrivalWeather = await getWeatherAtDateHour(
+        routePoints[routePoints.length - 1].lat,
+        routePoints[routePoints.length - 1].lng,
+        arrivalSlot.date,
+        arrivalSlot.hour
+    );
+
+    const score =
+        getWeatherFavorabilityPenalty(departureWeather) +
+        getWeatherFavorabilityPenalty(arrivalWeather) +
+        (maxWind > RECOMMENDED_MAX_WIND_KN ? (maxWind - RECOMMENDED_MAX_WIND_KN) * 50 : 0) +
+        totalTimeHours * 0.2;
+
+    return {
+        departureDateTime,
+        arrivalDateTime,
+        totalTimeHours,
+        maxWind,
+        departureWeather,
+        arrivalWeather,
+        score,
+        isSafe: maxWind <= RECOMMENDED_MAX_WIND_KN
+    };
+}
+
+function renderDepartureSuggestion(result) {
+    const container = document.getElementById('departureSuggestionInfo');
+    if (!container) return;
+
+    if (!result) {
+        lastDepartureSuggestion = null;
+        container.textContent = 'Suggestion départ: aucune fenêtre météo favorable trouvée.';
+        container.classList.remove('suggestion-clickable');
+        return;
+    }
+
+    lastDepartureSuggestion = result;
+    container.classList.add('suggestion-clickable');
+
+    const depWind = Number.isFinite(result?.departureWeather?.windSpeed) ? `${result.departureWeather.windSpeed.toFixed(1)} kn` : 'N/A';
+    const arrWind = Number.isFinite(result?.arrivalWeather?.windSpeed) ? `${result.arrivalWeather.windSpeed.toFixed(1)} kn` : 'N/A';
+    const maxWind = Number.isFinite(result?.maxWind) ? `${result.maxWind.toFixed(1)} kn` : 'N/A';
+
+    container.innerHTML =
+        `<strong>Départ conseillé:</strong> ${formatWeekdayHourUtc(result.departureDateTime)}<br>` +
+        `Arrivée estimée: ${formatWeekdayHourUtc(result.arrivalDateTime)} · ${formatDurationHours(result.totalTimeHours)}<br>` +
+        `Vent départ: ${depWind} · Vent arrivée: ${arrWind} · Vent max trajet: ${maxWind}`;
+}
+
+async function suggestBestDeparture() {
+    if (routePoints.length < 2) {
+        alert('Ajoute au moins 2 waypoints pour analyser un départ.');
+        return;
+    }
+
+    const button = document.getElementById('suggestDepartureBtn');
+    if (button) {
+        button.disabled = true;
+        button.textContent = 'Analyse météo...';
+    }
+
+    try {
+        const baseDateTime = new Date(`${departureDate}T${departureTime}:00`);
+        if (Number.isNaN(baseDateTime.getTime())) throw new Error('invalid-departure');
+
+        const candidates = [];
+        const stepHours = 3;
+        const maxCandidates = Math.min(32, Math.max(8, forecastWindowDays * 8));
+
+        for (let i = 0; i < maxCandidates; i++) {
+            const candidateDate = new Date(baseDateTime.getTime() + i * stepHours * 3600 * 1000);
+            if ((candidateDate.getTime() - baseDateTime.getTime()) > forecastWindowDays * 24 * 3600 * 1000) break;
+            const estimate = await estimateRouteForDeparture(candidateDate);
+            if (estimate) candidates.push(estimate);
+        }
+
+        if (candidates.length === 0) {
+            renderDepartureSuggestion(null);
+            return;
+        }
+
+        const safeCandidates = candidates.filter(c => c.isSafe);
+        const pool = safeCandidates.length ? safeCandidates : candidates;
+        pool.sort((a, b) => a.score - b.score);
+        const best = pool[0] || null;
+
+        if (!best) {
+            renderDepartureSuggestion(null);
+            return;
+        }
+
+        renderDepartureSuggestion(best);
+        applyLastDepartureSuggestion();
+    } catch (_error) {
+        alert('Impossible de calculer une suggestion de départ pour le moment.');
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.textContent = 'Conseiller départ météo (≤ 20 kn)';
+        }
+    }
+}
+
+function buildRouteVectorDataUrl(reportData) {
+    const polyline = reportData?.routeVector?.polyline;
+    const waypoints = Array.isArray(reportData?.routeVector?.waypoints)
+        ? reportData.routeVector.waypoints
+        : [];
+    if (!Array.isArray(polyline) || polyline.length < 2) return null;
+
+    const lats = polyline.map(p => Number(p?.lat)).filter(Number.isFinite);
+    const lngs = polyline.map(p => Number(p?.lng)).filter(Number.isFinite);
+    if (lats.length < 2 || lngs.length < 2) return null;
+
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+    const minLng = Math.min(...lngs);
+    const maxLng = Math.max(...lngs);
+
+    const width = 1100;
+    const height = 460;
+    const pad = 34;
+    const innerW = width - pad * 2;
+    const innerH = height - pad * 2;
+    const latSpan = Math.max(1e-9, maxLat - minLat);
+    const lngSpan = Math.max(1e-9, maxLng - minLng);
+
+    const toXY = (point) => {
+        const x = pad + ((point.lng - minLng) / lngSpan) * innerW;
+        const y = pad + ((maxLat - point.lat) / latSpan) * innerH;
+        return { x, y };
+    };
+
+    const projected = polyline.map(toXY);
+    const pathD = projected
+        .map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
+        .join(' ');
+
+    const start = projected[0];
+    const end = projected[projected.length - 1];
+
+    const projectedWaypoints = waypoints
+        .map(wp => {
+            const lat = Number(wp?.lat);
+            const lng = Number(wp?.lng);
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+            const p = toXY({ lat, lng });
+            return {
+                ...p,
+                label: String(wp?.label || ''),
+                icon: String(wp?.icon || '•')
+            };
+        })
+        .filter(Boolean);
+
+    const gridLines = [];
+    const steps = 5;
+    for (let i = 1; i < steps; i++) {
+        const gx = pad + (innerW * i) / steps;
+        const gy = pad + (innerH * i) / steps;
+        gridLines.push(`<line x1="${gx.toFixed(1)}" y1="${pad}" x2="${gx.toFixed(1)}" y2="${height - pad}" stroke="#1f3a51" stroke-opacity="0.35" stroke-width="1" />`);
+        gridLines.push(`<line x1="${pad}" y1="${gy.toFixed(1)}" x2="${width - pad}" y2="${gy.toFixed(1)}" stroke="#1f3a51" stroke-opacity="0.35" stroke-width="1" />`);
+    }
+
+    const waypointNodes = projectedWaypoints.map((wp, idx) => {
+        const textX = Math.min(width - 100, wp.x + 8).toFixed(1);
+        const textY = Math.max(14, wp.y - 8).toFixed(1);
+        return `
+            <circle cx="${wp.x.toFixed(1)}" cy="${wp.y.toFixed(1)}" r="4.5" fill="#7fd8ff" stroke="#ffffff" stroke-width="1.5" />
+            <text x="${textX}" y="${textY}" fill="#d8f4ff" font-size="11" font-family="Arial">${escapeHtml(wp.icon || '')}${escapeHtml(wp.label || `WP ${idx + 1}`)}</text>
+        `;
+    }).join('');
+
+    const northX = width - 52;
+    const northY = 30;
+
+    const svg = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+            <rect x="0" y="0" width="${width}" height="${height}" rx="16" ry="16" fill="#0e1620"/>
+            <rect x="${pad}" y="${pad}" width="${innerW}" height="${innerH}" rx="10" ry="10" fill="#102434" stroke="#2a4d67" stroke-width="1.2"/>
+            ${gridLines.join('')}
+            <path d="${pathD}" fill="none" stroke="#ff9a3a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+            ${waypointNodes}
+            <circle cx="${start.x.toFixed(1)}" cy="${start.y.toFixed(1)}" r="6" fill="#37d67a" stroke="#ffffff" stroke-width="2"/>
+            <circle cx="${end.x.toFixed(1)}" cy="${end.y.toFixed(1)}" r="6" fill="#ff5f6d" stroke="#ffffff" stroke-width="2"/>
+            <text x="${Math.min(width - 90, start.x + 10).toFixed(1)}" y="${Math.max(18, start.y - 10).toFixed(1)}" fill="#bde9ff" font-size="13" font-family="Arial">Départ</text>
+            <text x="${Math.min(width - 90, end.x + 10).toFixed(1)}" y="${Math.max(18, end.y - 10).toFixed(1)}" fill="#ffc8ce" font-size="13" font-family="Arial">Arrivée</text>
+            <circle cx="${northX}" cy="${northY}" r="16" fill="#102434" stroke="#7fd8ff" stroke-width="1.2"/>
+            <path d="M ${northX} ${northY - 10} L ${northX - 5} ${northY + 4} L ${northX} ${northY + 1} L ${northX + 5} ${northY + 4} Z" fill="#7fd8ff"/>
+            <text x="${northX}" y="${northY + 13}" text-anchor="middle" fill="#d8f4ff" font-size="10" font-family="Arial" font-weight="700">N</text>
+        </svg>`;
+
+    return `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
+}
+
+async function captureMapImageDataUrl() {
+    if (!map || typeof window.html2canvas !== 'function') return null;
+
+    let previousCenter = null;
+    let previousZoom = null;
+    let previousBaseLayer = null;
+
+    try {
+        previousCenter = map.getCenter();
+        previousZoom = map.getZoom();
+        previousBaseLayer = activeBaseLayer;
+
+        if (activeBaseLayer !== standardTileLayer) {
+            if (activeBaseLayer && map.hasLayer(activeBaseLayer)) map.removeLayer(activeBaseLayer);
+            if (!map.hasLayer(standardTileLayer)) map.addLayer(standardTileLayer);
+            activeBaseLayer = standardTileLayer;
+        }
+
+        if (lastRouteBounds?.isValid?.()) {
+            map.fitBounds(lastRouteBounds, { padding: [40, 40], animate: false });
+        }
+
+        map.invalidateSize(false);
+        await new Promise(resolve => setTimeout(resolve, 380));
+
+        const canvas = await window.html2canvas(map.getContainer(), {
+            useCORS: true,
+            allowTaint: false,
+            backgroundColor: '#0e1620',
+            scale: 2,
+            logging: false,
+            width: map.getSize().x,
+            height: map.getSize().y
+        });
+
+        return canvas.toDataURL('image/jpeg', 0.92);
+    } catch (error) {
+        return null;
+    } finally {
+        if (previousBaseLayer && activeBaseLayer !== previousBaseLayer) {
+            if (activeBaseLayer && map.hasLayer(activeBaseLayer)) map.removeLayer(activeBaseLayer);
+            if (!map.hasLayer(previousBaseLayer)) map.addLayer(previousBaseLayer);
+            activeBaseLayer = previousBaseLayer;
+        }
+
+        if (previousCenter && Number.isFinite(previousZoom)) {
+            map.setView(previousCenter, previousZoom, { animate: false });
+            map.invalidateSize(false);
+        }
+    }
+}
+
+function buildVoyageReportHtml(data, mapImageDataUrl, vectorImageDataUrl) {
+    const metrics = data?.metrics || {};
+    const routeName = escapeHtml(data?.routeName || 'Route');
+    const computedAt = escapeHtml(formatUtcDateTime(data?.computedAt));
+    const departure = escapeHtml(formatUtcDateTime(data?.departureIso));
+    const arrival = escapeHtml(formatUtcDateTime(data?.arrivalIso));
+    const weatherUpdatedAt = escapeHtml(formatUtcDateTime(data?.weatherUpdatedAt));
+
+    const segmentRows = (data?.segments || []).map(seg => `
+        <tr>
+            <td>${escapeHtml(seg.startIcon || '')}</td>
+            <td>${escapeHtml(seg.number)}</td>
+            <td>${escapeHtml(seg.startLabel || '')}</td>
+            <td>${escapeHtml(seg.departureLabel || '')}</td>
+            <td>${escapeHtml(seg.arrivalLabel || '')}</td>
+            <td>${escapeHtml(seg.bearing)}°</td>
+            <td>${escapeHtml(seg.distance)} nm</td>
+            <td>${escapeHtml(seg.time)} h</td>
+            <td>${escapeHtml(seg.speed)} kn</td>
+            <td>${escapeHtml(seg.sailSetup || '')}</td>
+        </tr>
+    `).join('');
+
+    const waypointRows = (data?.waypoints || []).map(wp => `
+        <tr>
+            <td>${escapeHtml(wp.label)}</td>
+            <td>${escapeHtml(wp.passageLabel || '')}</td>
+            <td>${escapeHtml(wp.windSpeed)}</td>
+            <td>${escapeHtml(wp.windDirection)}</td>
+            <td>${escapeHtml(wp.pressure)}</td>
+            <td>${escapeHtml(wp.waveHeight)}</td>
+            <td>${escapeHtml(wp.summary)}</td>
+        </tr>
+    `).join('');
+
+    const mapSection = mapImageDataUrl
+        ? `<img class="map-image" src="${mapImageDataUrl}" alt="Carte de navigation" />`
+        : '<div class="map-placeholder">Carte indisponible</div>';
+
+    const vectorSection = vectorImageDataUrl
+        ? `<img class="map-image" src="${vectorImageDataUrl}" alt="Tracé 2D" />`
+        : '<div class="map-placeholder">Tracé 2D indisponible</div>';
+
+    return `
+    <div class="pdf-report">
+        <header class="hero">
+            <div>
+                <h1>Carnet de Voyage</h1>
+                <h2>${routeName}</h2>
+                <p>Généré le ${computedAt}</p>
+            </div>
+            <div class="hero-meta">
+                <div><strong>Départ</strong><span>${departure}</span></div>
+                <div><strong>Arrivée</strong><span>${arrival}</span></div>
+                <div><strong>Météo MAJ</strong><span>${weatherUpdatedAt}</span></div>
+            </div>
+        </header>
+
+        <section class="cards">
+            <article><span>Distance</span><strong>${escapeHtml(metrics.totalDistanceNm)} nm</strong></article>
+            <article><span>Durée</span><strong>${escapeHtml(metrics.totalTimeLabel)}</strong></article>
+            <article><span>Segments</span><strong>${escapeHtml(metrics.segmentCount)}</strong></article>
+            <article><span>WP auto</span><strong>${escapeHtml(metrics.generatedWaypointCount)}</strong></article>
+        </section>
+
+        <section>
+            <h3>Carte de navigation</h3>
+            ${mapSection}
+        </section>
+
+        <section>
+            <h3>Tracé de navigation (2D)</h3>
+            ${vectorSection}
+        </section>
+
+        <section>
+            <h3>Segments</h3>
+            <table>
+                <thead>
+                    <tr><th>WP</th><th>Seg</th><th>Nom</th><th>Départ</th><th>Arrivée</th><th>Cap</th><th>Dist</th><th>Temps</th><th>Vit</th><th>Voiles</th></tr>
+                </thead>
+                <tbody>${segmentRows}</tbody>
+            </table>
+        </section>
+
+        <section>
+            <h3>Météo aux waypoints</h3>
+            <table>
+                <thead>
+                    <tr><th>WP</th><th>Passage</th><th>Vent</th><th>Dir</th><th>Pression</th><th>Houle</th><th>Résumé</th></tr>
+                </thead>
+                <tbody>${waypointRows}</tbody>
+            </table>
+        </section>
+    </div>`;
+}
+
+function createReportStyles() {
+    return `
+        <style>
+            body { margin:0; background:#fff; font-family: Inter, Segoe UI, Arial, sans-serif; color:#0d2233; }
+            .pdf-report { width: 790px; margin: 0 auto; padding: 20px 24px 32px; box-sizing: border-box; }
+            .hero { display:flex; justify-content:space-between; align-items:flex-start; background:linear-gradient(135deg,#0e2134,#19415f); color:#fff; border-radius:14px; padding:18px 20px; }
+            .hero h1 { margin:0; font-size:30px; }
+            .hero h2 { margin:4px 0 6px; font-size:18px; font-weight:600; color:#9edcff; }
+            .hero p { margin:0; font-size:12px; opacity:.85; }
+            .hero-meta { display:grid; gap:8px; min-width:210px; }
+            .hero-meta div { display:flex; justify-content:space-between; gap:12px; font-size:12px; }
+            .hero-meta strong { color:#9edcff; }
+            h3 { margin:18px 0 8px; font-size:16px; color:#14324a; }
+            .cards { display:grid; grid-template-columns: repeat(4,1fr); gap:10px; margin-top:12px; }
+            .cards article { border:1px solid #d8e6f0; border-radius:10px; padding:10px; background:#f7fbff; }
+            .cards span { display:block; font-size:11px; color:#48647c; }
+            .cards strong { display:block; margin-top:4px; font-size:20px; color:#0f3048; }
+            .map-image { width:100%; max-height:250px; object-fit:contain; background:#0e1620; border-radius:12px; border:1px solid #d2e0ea; display:block; }
+            .map-placeholder { border:1px dashed #9bb3c6; border-radius:12px; padding:28px; text-align:center; color:#4f6a80; background:#f7fbff; }
+            table { width:100%; border-collapse:collapse; font-size:11px; }
+            th, td { border-bottom:1px solid #e0e9f0; padding:6px 5px; text-align:left; vertical-align:top; }
+            th { background:#f3f8fc; color:#23465f; font-weight:600; }
+            tr:nth-child(even) td { background:#fbfdff; }
+        </style>
+    `;
+}
+
+async function exportVoyagePdfReport() {
+    if (!lastComputedReportData) {
+        alert('Calcule une route avant d\'exporter le rapport PDF.');
+        return;
+    }
+
+    if (!window?.jspdf?.jsPDF) {
+        alert('jsPDF non disponible dans le navigateur.');
+        return;
+    }
+
+    const button = document.getElementById('exportVoyagePdfBtn');
+    if (button) {
+        button.disabled = true;
+        button.textContent = 'Génération PDF...';
+    }
+
+    try {
+        const mapImageDataUrl = await captureMapImageDataUrl();
+        const vectorDataUrl = buildRouteVectorDataUrl(lastComputedReportData);
+        const reportHtml = buildVoyageReportHtml(lastComputedReportData, mapImageDataUrl, vectorDataUrl);
+        const wrapper = document.createElement('div');
+        wrapper.style.position = 'fixed';
+        wrapper.style.left = '-10000px';
+        wrapper.style.top = '0';
+        wrapper.style.width = '790px';
+        wrapper.style.background = '#fff';
+        wrapper.innerHTML = `${createReportStyles()}${reportHtml}`;
+        document.body.appendChild(wrapper);
+
+        const canvas = await window.html2canvas(wrapper, {
+            useCORS: true,
+            allowTaint: false,
+            backgroundColor: '#ffffff',
+            scale: 2
+        });
+        document.body.removeChild(wrapper);
+
+        const { jsPDF } = window.jspdf;
+        const pdf = new jsPDF('p', 'mm', 'a4');
+
+        const pageWidth = pdf.internal.pageSize.getWidth();
+        const pageHeight = pdf.internal.pageSize.getHeight();
+        const imgData = canvas.toDataURL('image/jpeg', 0.95);
+        const imgWidth = pageWidth;
+        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+        let heightLeft = imgHeight;
+        let position = 0;
+        pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
+
+        while (heightLeft > 0) {
+            position = heightLeft - imgHeight;
+            pdf.addPage();
+            pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
+            heightLeft -= pageHeight;
+        }
+
+        const safeName = (lastComputedReportData.routeName || 'voyage').replace(/[^a-z0-9\-_]/gi, '_');
+        const dateTag = new Date().toISOString().slice(0, 10);
+        pdf.save(`rapport_${safeName}_${dateTag}.pdf`);
+    } catch (error) {
+        alert('Impossible de générer le PDF.');
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.textContent = 'Exporter rapport PDF';
+        }
+    }
+}
+
+function getSeaComfortLevel(weather) {
+    const waveHeight = weather?.waveHeight;
+    const windSpeed = weather?.windSpeed;
+
+    if (Number.isFinite(waveHeight)) {
+        if (waveHeight < 0.7) return 'Confort: calme';
+        if (waveHeight < 1.5) return 'Confort: modéré';
+        if (waveHeight < 2.5) return 'Confort: agité';
+        return 'Confort: difficile';
+    }
+
+    if (Number.isFinite(windSpeed)) {
+        if (windSpeed < 10) return 'Confort: calme';
+        if (windSpeed < 18) return 'Confort: modéré';
+        if (windSpeed < 25) return 'Confort: agité';
+        return 'Confort: difficile';
+    }
+
+    return 'Confort: N/A';
+}
+
+function getSailRecommendation({ isMotorSegment, tws, twa, sailModeValue }) {
+    if (isMotorSegment) return 'Moteur';
+
+    const prudentOffset = sailModeValue === 'prudent' ? -2 : 0;
+    const perfOffset = sailModeValue === 'performance' ? 2 : 0;
+
+    if (tws >= (22 + prudentOffset)) return 'GV 2 ris + trinquette';
+    if (tws >= (16 + prudentOffset)) {
+        if (twa > 130 && sailModeValue === 'performance') return 'GV 1 ris + spi';
+        return 'GV 1 ris + génois réduit';
+    }
+
+    if (twa < 60) return sailModeValue === 'prudent' ? 'GV pleine + génois réduit' : 'GV pleine + génois';
+    if (twa < 115) return 'GV pleine + génois';
+    if (twa < 145) return sailModeValue === 'prudent' ? 'GV + génois tangonné' : 'GV + gennaker';
+
+    if (sailModeValue === 'performance' && tws < (18 + perfOffset)) return 'GV + spi';
+    return 'GV + génois tangonné';
+}
+
+function getSailPerformanceFactor({ isMotorSegment, sailModeValue, tws, twa, sailSetup }) {
+    if (isMotorSegment) return 1;
+
+    let baseFactor = 1;
+    if (sailModeValue === 'prudent') {
+        baseFactor = tws >= 24 ? 0.88 : 0.92;
+    } else if (sailModeValue === 'performance') {
+        baseFactor = tws >= 24 ? 1.0 : 1.08;
+    }
+
+    const isGennakerSetup = typeof sailSetup === 'string' && sailSetup.toLowerCase().includes('gennaker');
+    const gennakerBoost = isGennakerSetup && Number.isFinite(twa) && twa >= 95 && twa <= 150 ? 1.1 : 1;
+
+    return baseFactor * gennakerBoost;
+}
+
+function getSailComment({ sailSetup, sailModeValue, tws, twa, isMotorSegment }) {
+    if (isMotorSegment) return 'Vent faible (< 5 kn) : passage au moteur à 7 kn.';
+
+    const twaText = Number.isFinite(twa) ? `${Math.round(twa)}°` : 'N/A';
+    const twsText = Number.isFinite(tws) ? `${tws.toFixed(1)} kn` : 'N/A';
+    const modeLabel = sailModeValue === 'prudent' ? 'Prudent' : (sailModeValue === 'performance' ? 'Performance' : 'Auto');
+
+    return `Mode ${modeLabel} · TWS ${twsText} · TWA ${twaText} → ${sailSetup}`;
+}
+
+async function ensureLandGeometryLoaded() {
+    if (landGeometry) return landGeometry;
+
+    try {
+        for (const source of LAND_DATA_SOURCES) {
+            const response = await fetch(source.url);
+            if (!response.ok) continue;
+
+            const topo = await response.json();
+            if (!topo?.objects?.[source.objectName]) continue;
+
+            landGeometry = topojsonFeature(topo, topo.objects[source.objectName]);
+            if (landGeometry) return landGeometry;
+        }
+
+        throw new Error('No usable land geometry source');
+    } catch (error) {
+        console.warn('Chargement des données côtières impossible, contournement désactivé pour ce calcul.', error);
+        return null;
+    }
+}
+
+function pointInRing(point, ring) {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const xi = ring[i][0], yi = ring[i][1];
+        const xj = ring[j][0], yj = ring[j][1];
+
+        const intersects = ((yi > point[1]) !== (yj > point[1])) &&
+            (point[0] < ((xj - xi) * (point[1] - yi)) / ((yj - yi) || 1e-12) + xi);
+
+        if (intersects) inside = !inside;
+    }
+    return inside;
+}
+
+function pointInPolygonGeometry(lon, lat, geometry) {
+    if (!geometry || (geometry.type !== 'Polygon' && geometry.type !== 'MultiPolygon')) return false;
+
+    const testPoint = [lon, lat];
+    const polygons = geometry.type === 'Polygon' ? [geometry.coordinates] : geometry.coordinates;
+
+    for (const poly of polygons) {
+        const outer = poly[0];
+        if (!pointInRing(testPoint, outer)) continue;
+
+        let inHole = false;
+        for (let h = 1; h < poly.length; h++) {
+            if (pointInRing(testPoint, poly[h])) {
+                inHole = true;
+                break;
+            }
+        }
+        if (!inHole) return true;
+    }
+
+    return false;
+}
+
+function geometryContainsPoint(lon, lat, geometry) {
+    if (!geometry) return false;
+
+    if (geometry.type === 'Polygon' || geometry.type === 'MultiPolygon') {
+        return pointInPolygonGeometry(lon, lat, geometry);
+    }
+
+    if (geometry.type === 'GeometryCollection' && Array.isArray(geometry.geometries)) {
+        return geometry.geometries.some(g => geometryContainsPoint(lon, lat, g));
+    }
+
+    return false;
+}
+
+function isPointOnLand(lat, lon) {
+    if (!landGeometry) return false;
+
+    if (landGeometry.type === 'Feature') {
+        return geometryContainsPoint(lon, lat, landGeometry.geometry);
+    }
+
+    if (landGeometry.type === 'FeatureCollection' && Array.isArray(landGeometry.features)) {
+        return landGeometry.features.some(feature => geometryContainsPoint(lon, lat, feature?.geometry));
+    }
+
+    return geometryContainsPoint(lon, lat, landGeometry);
+}
+
+function segmentCrossesLand(start, end, samples = null) {
+    const legDistance = distanceNm(start.lat, start.lon, end.lat, end.lon);
+    const sampleCount = Number.isFinite(samples)
+        ? Math.max(12, Math.floor(samples))
+        : Math.max(48, Math.min(720, Math.ceil(legDistance * 8)));
+
+    for (let i = 0; i <= sampleCount; i++) {
+        const t = i / sampleCount;
+        const lat = start.lat + (end.lat - start.lat) * t;
+        const lon = start.lon + (end.lon - start.lon) * t;
+        if (isPointOnLand(lat, lon)) return true;
+    }
+    return false;
+}
+
+function polylineCrossesLand(points) {
+    for (let i = 0; i < points.length - 1; i++) {
+        if (segmentCrossesLand(points[i], points[i + 1])) return true;
+    }
+    return false;
+}
+
+function polylineLatLngCrossesLand(latlngs) {
+    if (!Array.isArray(latlngs) || latlngs.length < 2) return false;
+
+    for (let i = 0; i < latlngs.length - 1; i++) {
+        const start = { lat: latlngs[i][0], lon: latlngs[i][1] };
+        const end = { lat: latlngs[i + 1][0], lon: latlngs[i + 1][1] };
+        if (segmentCrossesLand(start, end)) return true;
+    }
+
+    return false;
+}
+
+function polylineDistanceNm(points) {
+    let total = 0;
+    for (let i = 0; i < points.length - 1; i++) {
+        total += distanceNm(points[i].lat, points[i].lon, points[i + 1].lat, points[i + 1].lon);
+    }
+    return total;
+}
+
+function compressGeneratedWaypoints(points, minSpacingNm = AUTO_WP_MIN_SPACING_NM, maxIntermediate = AUTO_WP_MAX_INTERMEDIATE) {
+    if (!Array.isArray(points) || points.length <= 2) return points;
+
+    const result = [points[0]];
+    let lastKept = points[0];
+
+    for (let i = 1; i < points.length - 1; i++) {
+        const point = points[i];
+        const spacing = distanceNm(lastKept.lat, lastKept.lon, point.lat, point.lon);
+        if (spacing >= minSpacingNm) {
+            result.push(point);
+            lastKept = point;
+        }
+    }
+
+    result.push(points[points.length - 1]);
+
+    if (result.length - 2 <= maxIntermediate) {
+        return result;
+    }
+
+    const compressed = [result[0]];
+    const intermediate = result.slice(1, -1);
+    const step = Math.ceil(intermediate.length / maxIntermediate);
+
+    for (let i = 0; i < intermediate.length; i += step) {
+        compressed.push(intermediate[i]);
+    }
+
+    compressed.push(result[result.length - 1]);
+    return compressed;
+}
+
+async function buildCoastalBypassWaypoints(startPoint, endPoint, baseClearanceNm = COASTAL_CLEARANCE_NM, minSpacingNm = AUTO_WP_MIN_SPACING_NM) {
+    const geometry = await ensureLandGeometryLoaded();
+    if (!geometry) {
+        return [startPoint, endPoint];
+    }
+
+    if (!segmentCrossesLand(startPoint, endPoint)) {
+        return [startPoint, endPoint];
+    }
+
+    const directBearing = getBearing(startPoint, endPoint);
+    const mid = {
+        lat: (startPoint.lat + endPoint.lat) / 2,
+        lon: (startPoint.lon + endPoint.lon) / 2
+    };
+
+    const candidateRoutes = [];
+    const clearanceSteps = [baseClearanceNm, 8, 12, 18, 26, 36, 50, 70, 90];
+
+    for (const clearance of clearanceSteps) {
+        for (const side of [-1, 1]) {
+            const candidateMid = movePoint(mid.lat, mid.lon, directBearing + side * 90, clearance);
+            const oneWpPath = [
+                startPoint,
+                { lat: candidateMid.lat, lon: candidateMid.lon },
+                endPoint
+            ];
+
+            if (!polylineCrossesLand(oneWpPath)) {
+                candidateRoutes.push({
+                    path: oneWpPath,
+                    clearance,
+                    wpCount: 1
+                });
+            }
+
+            const firstThird = {
+                lat: startPoint.lat + (endPoint.lat - startPoint.lat) / 3,
+                lon: startPoint.lon + (endPoint.lon - startPoint.lon) / 3
+            };
+            const secondThird = {
+                lat: startPoint.lat + 2 * (endPoint.lat - startPoint.lat) / 3,
+                lon: startPoint.lon + 2 * (endPoint.lon - startPoint.lon) / 3
+            };
+
+            const wp1 = movePoint(firstThird.lat, firstThird.lon, directBearing + side * 90, clearance);
+            const wp2 = movePoint(secondThird.lat, secondThird.lon, directBearing + side * 90, clearance);
+
+            const twoWpPath = [
+                startPoint,
+                { lat: wp1.lat, lon: wp1.lon },
+                { lat: wp2.lat, lon: wp2.lon },
+                endPoint
+            ];
+
+            if (!polylineCrossesLand(twoWpPath)) {
+                candidateRoutes.push({
+                    path: twoWpPath,
+                    clearance,
+                    wpCount: 2
+                });
+            }
+        }
+    }
+
+    if (candidateRoutes.length === 0) return null;
+
+    function candidateScore(candidate) {
+        const distanceScore = polylineDistanceNm(candidate.path);
+        const clearancePenalty = Math.abs(candidate.clearance - baseClearanceNm) * 3;
+        const waypointPenalty = candidate.wpCount > 1 ? 0.35 : 0;
+        return distanceScore + clearancePenalty + waypointPenalty;
+    }
+
+    candidateRoutes.sort((a, b) => {
+        const scoreDiff = candidateScore(a) - candidateScore(b);
+        if (Math.abs(scoreDiff) > 1e-6) return scoreDiff;
+        return polylineDistanceNm(a.path) - polylineDistanceNm(b.path);
+    });
+
+    return compressGeneratedWaypoints(candidateRoutes[0].path, minSpacingNm, AUTO_WP_MAX_INTERMEDIATE);
+}
+
+function getMeasureTotalNm(points) {
+    if (!Array.isArray(points) || points.length < 2) return 0;
+    let total = 0;
+    for (let i = 0; i < points.length - 1; i++) {
+        total += distanceNm(points[i].lat, points[i].lng, points[i + 1].lat, points[i + 1].lng);
+    }
+    return total;
+}
+
+function updateMeasureInfo() {
+    const info = document.getElementById('measureInfo');
+    if (!info) return;
+    const total = getMeasureTotalNm(measurePoints);
+    info.textContent = `Mesure: ${total.toFixed(2)} nm`;
+}
+
+function clearMeasureLabels() {
+    measureLabelLayers.forEach(layer => {
+        if (map.hasLayer(layer)) map.removeLayer(layer);
+    });
+    measureLabelLayers = [];
+}
+
+function redrawMeasurePolylineAndLabels() {
+    if (!map) return;
+
+    if (measurePolylineLayer && map.hasLayer(measurePolylineLayer)) {
+        map.removeLayer(measurePolylineLayer);
+    }
+    clearMeasureLabels();
+
+    if (measurePoints.length >= 2) {
+        measurePolylineLayer = L.polyline(measurePoints, {
+            color: '#8fe7ff',
+            weight: 3,
+            opacity: 0.95,
+            dashArray: '8,6'
+        }).addTo(map);
+
+        for (let i = 0; i < measurePoints.length - 1; i++) {
+            const a = measurePoints[i];
+            const b = measurePoints[i + 1];
+            const segmentNm = distanceNm(a.lat, a.lng, b.lat, b.lng);
+
+            const mid = {
+                lat: (a.lat + b.lat) / 2,
+                lng: (a.lng + b.lng) / 2
+            };
+
+            const label = L.marker([mid.lat, mid.lng], {
+                icon: L.divIcon({
+                    className: 'measure-distance-label',
+                    html: `${segmentNm.toFixed(2)} nm`,
+                    iconSize: null
+                }),
+                interactive: false,
+                keyboard: false,
+                zIndexOffset: 1200
+            }).addTo(map);
+
+            measureLabelLayers.push(label);
+        }
+    } else {
+        measurePolylineLayer = null;
+    }
+
+    updateMeasureInfo();
+}
+
+function clearMeasureTool() {
+    if (measurePolylineLayer && map?.hasLayer(measurePolylineLayer)) {
+        map.removeLayer(measurePolylineLayer);
+    }
+    measurePolylineLayer = null;
+
+    measurePointLayers.forEach(layer => {
+        if (map?.hasLayer(layer)) map.removeLayer(layer);
+    });
+    measurePointLayers = [];
+
+    clearMeasureLabels();
+    measurePoints = [];
+    updateMeasureInfo();
+}
+
+function addMeasurePoint(latlng) {
+    measurePoints.push({ lat: latlng.lat, lng: latlng.lng });
+
+    const pointLayer = L.circleMarker(latlng, {
+        radius: 4,
+        color: '#8fe7ff',
+        weight: 2,
+        fillColor: '#133341',
+        fillOpacity: 0.9
+    }).addTo(map);
+
+    measurePointLayers.push(pointLayer);
+    redrawMeasurePolylineAndLabels();
+}
+
+function setMeasureMode(enabled) {
+    measureModeEnabled = Boolean(enabled);
+
+    const btn = document.getElementById('measureToggleBtn');
+    if (btn) {
+        btn.textContent = `Mesure NM: ${measureModeEnabled ? 'ON' : 'OFF'}`;
+        btn.classList.toggle('active', measureModeEnabled);
+    }
+
+    if (map) {
+        map.getContainer().style.cursor = measureModeEnabled ? 'crosshair' : '';
+    }
+}
+
+function createNauticalScaleControl() {
+    if (!map) return;
+
+    const nauticalScaleControl = L.control({ position: 'bottomleft' });
+
+    nauticalScaleControl.onAdd = function() {
+        const container = L.DomUtil.create('div', 'nautical-scale-control');
+        container.innerHTML =
+            '<div class="nautical-scale-label">-- nm</div>' +
+            '<div class="nautical-scale-bar"></div>';
+        L.DomEvent.disableClickPropagation(container);
+        return container;
+    };
+
+    nauticalScaleControl.addTo(map);
+
+    const niceStepsNm = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500];
+
+    function updateNauticalScale() {
+        const container = nauticalScaleControl.getContainer();
+        if (!container || !map) return;
+
+        const label = container.querySelector('.nautical-scale-label');
+        const bar = container.querySelector('.nautical-scale-bar');
+        if (!label || !bar) return;
+
+        const mapSize = map.getSize();
+        const probePx = Math.max(90, Math.min(160, Math.floor(mapSize.x * 0.18)));
+        const centerY = Math.floor(mapSize.y / 2);
+        const leftX = Math.floor((mapSize.x - probePx) / 2);
+
+        const p1 = L.point(leftX, centerY);
+        const p2 = L.point(leftX + probePx, centerY);
+        const ll1 = map.containerPointToLatLng(p1);
+        const ll2 = map.containerPointToLatLng(p2);
+
+        const maxNm = distanceNm(ll1.lat, ll1.lng, ll2.lat, ll2.lng);
+        if (!Number.isFinite(maxNm) || maxNm <= 0) {
+            label.textContent = 'N/A';
+            bar.style.width = '0px';
+            return;
+        }
+
+        let chosenNm = niceStepsNm[0];
+        for (const step of niceStepsNm) {
+            if (step <= maxNm) chosenNm = step;
+            else break;
+        }
+
+        const widthPx = Math.max(20, Math.round((chosenNm / maxNm) * probePx));
+        label.textContent = `${chosenNm} nm`;
+        bar.style.width = `${widthPx}px`;
+    }
+
+    map.on('zoom move', updateNauticalScale);
+    updateNauticalScale();
+}
+
+// =====================
+// INIT MAP
+// =====================
+
+document.addEventListener('DOMContentLoaded', function() {
+    map = L.map('map').setView([41.3851, 2.1734], 8);
+
+    standardTileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap',
+        crossOrigin: true
+    });
+
+    satelliteTileLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        attribution: 'Tiles © Esri',
+        crossOrigin: true
+    });
+
+    baseLayerControl = L.control.layers(
+        {
+            'Standard': standardTileLayer,
+            'Satellite': satelliteTileLayer
+        },
+        {},
+        { position: 'topright', collapsed: false }
+    ).addTo(map);
+
+    activeBaseLayer = standardTileLayer.addTo(map);
+
+    function setMapStyle(style) {
+        if (activeBaseLayer) map.removeLayer(activeBaseLayer);
+        activeBaseLayer = style === 'satellite' ? satelliteTileLayer : standardTileLayer;
+        activeBaseLayer.addTo(map);
+    }
+
+    createNauticalScaleControl();
+
+    // Setup event listeners after map is ready
+    map.on('click', function(e) {
+        if (measureModeEnabled) {
+            addMeasurePoint(e.latlng);
+            return;
+        }
+
+        addUserWaypoint(e.latlng);
+    });
+
+    // =====================
+    // DATE & TIME INPUT
+    // =====================
+
+    updateDepartureDateTimeInput();
+    document.getElementById("departureDateTimeInput").addEventListener("change", function(e) {
+        setDepartureFromDateTimeInput(e.target.value);
+    });
+
+    const savedStyle = normalizeMapStyle(localStorage.getItem(MAP_STYLE_STORAGE_KEY));
+    setMapStyle(savedStyle);
+
+    map.on('baselayerchange', function(e) {
+        const style = e.name === 'Satellite' ? 'satellite' : 'standard';
+        activeBaseLayer = style === 'satellite' ? satelliteTileLayer : standardTileLayer;
+        localStorage.setItem(MAP_STYLE_STORAGE_KEY, style);
+    });
+
+    const routingTabBtn = document.getElementById('routingTabBtn');
+    const routesTabBtn = document.getElementById('routesTabBtn');
+    const arrivalTabBtn = document.getElementById('arrivalTabBtn');
+    const routingTab = document.getElementById('routingTab');
+    const routesTab = document.getElementById('routesTab');
+    const arrivalTab = document.getElementById('arrivalTab');
+
+    function activateTab(tabName) {
+        const isRouting = tabName === 'routing';
+        const isRoutes = tabName === 'routes';
+        const isArrival = tabName === 'arrival';
+
+        routingTabBtn.classList.toggle('active', isRouting);
+        routesTabBtn.classList.toggle('active', isRoutes);
+        arrivalTabBtn.classList.toggle('active', isArrival);
+
+        routingTab.classList.toggle('active', isRouting);
+        routesTab.classList.toggle('active', isRoutes);
+        arrivalTab.classList.toggle('active', isArrival);
+    }
+
+    routingTabBtn.addEventListener('click', () => activateTab('routing'));
+    routesTabBtn.addEventListener('click', () => activateTab('routes'));
+    arrivalTabBtn.addEventListener('click', () => activateTab('arrival'));
+
+    document.getElementById("tackingTimeInput").value = tackingTimeHours;
+    document.getElementById("tackingTimeInput").addEventListener("change", function(e) {
+        tackingTimeHours = parseFloat(e.target.value);
+    });
+
+    document.getElementById("sailModeSelect").value = sailMode;
+    document.getElementById("sailModeSelect").addEventListener("change", function(e) {
+        sailMode = e.target.value;
+    });
+
+    const autoWpSpacingInput = document.getElementById('autoWpSpacingInput');
+    if (autoWpSpacingInput) {
+        autoWpSpacingInput.value = Number.isFinite(autoWpMinSpacingNm) ? String(autoWpMinSpacingNm) : 'off';
+        autoWpSpacingInput.addEventListener('change', function(e) {
+            const value = String(e.target.value || 'off');
+            if (value === 'off') {
+                autoWpMinSpacingNm = null;
+                return;
+            }
+
+            const parsed = parseFloat(value);
+            if (!Number.isFinite(parsed)) {
+                autoWpMinSpacingNm = null;
+                e.target.value = 'off';
+                return;
+            }
+
+            autoWpMinSpacingNm = Math.max(2, Math.min(50, parsed));
+            e.target.value = String(autoWpMinSpacingNm);
+        });
+    }
+
+    const forecastWindowDaysSelect = document.getElementById('forecastWindowDaysSelect');
+    if (forecastWindowDaysSelect) {
+        forecastWindowDaysSelect.value = String(forecastWindowDays);
+        forecastWindowDaysSelect.addEventListener('change', e => {
+            const parsed = parseInt(String(e.target.value || '3'), 10);
+            forecastWindowDays = Number.isFinite(parsed) ? Math.max(2, Math.min(7, parsed)) : 3;
+            e.target.value = String(forecastWindowDays);
+        });
+    }
+
+    document.getElementById("computeBtn").addEventListener("click", computeRoute);
+    const suggestDepartureBtn = document.getElementById('suggestDepartureBtn');
+    if (suggestDepartureBtn) {
+        suggestDepartureBtn.addEventListener('click', suggestBestDeparture);
+    }
+
+    const departureSuggestionInfo = document.getElementById('departureSuggestionInfo');
+    if (departureSuggestionInfo) {
+        departureSuggestionInfo.addEventListener('click', () => {
+            applyLastDepartureSuggestion();
+        });
+    }
+    document.getElementById("recenterBtn").addEventListener("click", recenterOnRoute);
+    const deleteSelectedWpBtn = document.getElementById('deleteSelectedWpBtn');
+    if (deleteSelectedWpBtn) {
+        deleteSelectedWpBtn.addEventListener('click', () => {
+            deleteUserWaypointAtIndex(selectedUserWaypointIndex);
+        });
+    }
+    const measureToggleBtn = document.getElementById('measureToggleBtn');
+    if (measureToggleBtn) {
+        measureToggleBtn.addEventListener('click', () => setMeasureMode(!measureModeEnabled));
+    }
+
+    const measureClearBtn = document.getElementById('measureClearBtn');
+    if (measureClearBtn) {
+        measureClearBtn.addEventListener('click', () => clearMeasureTool());
+    }
+
+    const analyzeArrivalBtn = document.getElementById('analyzeArrivalBtn');
+    if (analyzeArrivalBtn) {
+        analyzeArrivalBtn.addEventListener('click', analyzeArrivalZone);
+    }
+
+    updateMeasureInfo();
+    updateSelectedWaypointInfo();
+    setMeasureMode(false);
+
+    document.getElementById("resetBtn").addEventListener("click", () => {
+
+        routePoints = [];
+        markers = [];
+        selectedUserWaypointIndex = -1;
+        currentLoadedRouteIndex = -1;
+
+        if (routeLayer) map.removeLayer(routeLayer);
+        if (windLayer) map.removeLayer(windLayer);
+
+        map.eachLayer(layer => {
+            if (layer instanceof L.Marker) map.removeLayer(layer);
+        });
+        clearWaypointWindDirectionLayers();
+        clearWaveDirectionSegmentLayers();
+        clearGeneratedWaypointMarkers();
+        clearArrivalPoiMarkers();
+        clearMeasureTool();
+        setMeasureMode(false);
+        waypointPassageSlots.clear();
+        lastRouteBounds = null;
+        lastComputedReportData = null;
+
+        document.getElementById("info").innerHTML = "";
+        const weatherContainer = document.getElementById('waypointWeatherInfo');
+        if (weatherContainer) weatherContainer.innerHTML = '';
+        const windLegend = document.getElementById('windSpeedLegend');
+        if (windLegend) windLegend.innerHTML = '';
+        const suggestionBox = document.getElementById('departureSuggestionInfo');
+        lastDepartureSuggestion = null;
+        if (suggestionBox) {
+            suggestionBox.textContent = 'Suggestion départ: en attente';
+            suggestionBox.classList.remove('suggestion-clickable');
+        }
+        const arrivalSummary = document.getElementById('arrivalSummary');
+        if (arrivalSummary) arrivalSummary.textContent = 'Analyse mouillage: en attente';
+        const anchorageContainer = document.getElementById('anchorageRecommendations');
+        if (anchorageContainer) anchorageContainer.innerHTML = '';
+        const restaurants = document.getElementById('nearbyRestaurants');
+        if (restaurants) restaurants.innerHTML = '';
+        const shops = document.getElementById('nearbyShops');
+        if (shops) shops.innerHTML = '';
+        updateSelectedWaypointInfo();
+    });
+
+    // Saved routes UI
+    document.getElementById('saveRouteBtn').addEventListener('click', saveRoute);
+    document.getElementById('loadRouteBtn').addEventListener('click', () => {
+        const sel = document.getElementById('savedRoutesSelect');
+        loadRoute(sel.selectedIndex);
+    });
+    document.getElementById('savedRoutesSelect').addEventListener('change', e => {
+        const index = Number(e.target.selectedIndex);
+        if (Number.isFinite(index) && index >= 0) {
+            loadRoute(index);
+        }
+    });
+    document.getElementById('deleteRouteBtn').addEventListener('click', () => {
+        const sel = document.getElementById('savedRoutesSelect');
+        deleteRoute(sel.selectedIndex);
+    });
+    document.getElementById('exportRouteBtn').addEventListener('click', () => {
+        const sel = document.getElementById('savedRoutesSelect');
+        exportRoute(sel.selectedIndex);
+    });
+    document.getElementById('exportRouteGpxBtn').addEventListener('click', () => {
+        const sel = document.getElementById('savedRoutesSelect');
+        exportRouteGpx(sel.selectedIndex);
+    });
+    const exportVoyagePdfBtn = document.getElementById('exportVoyagePdfBtn');
+    if (exportVoyagePdfBtn) {
+        exportVoyagePdfBtn.addEventListener('click', exportVoyagePdfReport);
+    }
+    document.getElementById('importRouteInput').addEventListener('change', handleImport);
+
+    refreshSavedList();
+});
+
+// =====================
+// COMPUTE ROUTE
+// =====================
+
+async function computeRoute() {
+
+    if (routePoints.length < 2) return;
+
+    clearWaypointWindDirectionLayers();
+    clearWaveDirectionSegmentLayers();
+    clearGeneratedWaypointMarkers();
+    waypointPassageSlots.clear();
+
+    let fullRoute = [];
+    let totalTime = 0;
+    let totalDistance = 0;
+    let segmentsInfo = [];
+    const waypointPassageWeather = [];
+    const routeSegmentsForDraw = [];
+    let generatedAutoWaypointCount = 0;
+    let generatedWaypointOrdinal = 1;
+
+    const departureDateTime = new Date(`${departureDate}T${departureTime}:00`);
+    if (Number.isNaN(departureDateTime.getTime())) {
+        alert('Date/heure de départ invalide');
+        return;
+    }
+
+    for (let i = 0; i < routePoints.length - 1; i++) {
+
+        const userStart = { lat: routePoints[i].lat, lon: routePoints[i].lng };
+        const userEnd = { lat: routePoints[i + 1].lat, lon: routePoints[i + 1].lng };
+        const avoidLandIsActive = Number.isFinite(autoWpMinSpacingNm);
+        const safeLegPoints = avoidLandIsActive
+            ? await buildCoastalBypassWaypoints(userStart, userEnd, COASTAL_CLEARANCE_NM, autoWpMinSpacingNm)
+            : [userStart, userEnd];
+
+        if (avoidLandIsActive && !safeLegPoints) {
+            alert(`Impossible de contourner la terre sur le segment ${i + 1}. Essaie un espacement WP plus faible (5 ou 8 NM) ou ajoute un waypoint manuel.`);
+            return;
+        }
+
+        if (avoidLandIsActive && safeLegPoints.length > 2) {
+            generatedAutoWaypointCount += Math.max(0, safeLegPoints.length - 2);
+        }
+
+        if (safeLegPoints.length < 2) continue;
+
+        const pointMetas = safeLegPoints.map((point, pointIndex) => {
+            if (pointIndex === 0) {
+                return {
+                    type: 'user',
+                    label: `WP ${i + 1}`,
+                    icon: '📍',
+                    marker: markers[i] || null,
+                    latlng: { lat: point.lat, lng: point.lon }
+                };
+            }
+
+            if (pointIndex === safeLegPoints.length - 1) {
+                return {
+                    type: 'user',
+                    label: `WP ${i + 2}`,
+                    icon: '📍',
+                    marker: markers[i + 1] || null,
+                    latlng: { lat: point.lat, lng: point.lon }
+                };
+            }
+
+            const generatedIndex = generatedWaypointOrdinal++;
+            const label = `WP auto ${generatedIndex}`;
+            const latlng = { lat: point.lat, lng: point.lon };
+            const marker = createGeneratedWaypointMarker(latlng, label, `A${generatedIndex}`);
+            generatedWaypointMarkers.push(marker);
+
+            return {
+                type: 'generated',
+                label,
+                icon: `A${generatedIndex}`,
+                marker,
+                latlng
+            };
+        });
+
+        for (let legIndex = 0; legIndex < safeLegPoints.length - 1; legIndex++) {
+            const startPoint = safeLegPoints[legIndex];
+            const endPoint = safeLegPoints[legIndex + 1];
+            const startMeta = pointMetas[legIndex];
+
+            const passageDateTime = new Date(departureDateTime.getTime() + totalTime * 3600 * 1000);
+            const passageSlot = toDateAndHourUtc(passageDateTime);
+            const weatherAtPassage = await getWeatherAtDateHour(
+                startPoint.lat,
+                startPoint.lon,
+                passageSlot.date,
+                passageSlot.hour
+            );
+
+            if (startMeta?.marker) {
+                startMeta.marker._ceiboPassageSlot = passageSlot;
+                startMeta.marker._ceiboLabel = startMeta.label;
+            }
+
+            const wind = {
+                speed: Number.isFinite(weatherAtPassage.windSpeed) ? weatherAtPassage.windSpeed : 10,
+                direction: Number.isFinite(weatherAtPassage.windDirection) ? weatherAtPassage.windDirection : 0
+            };
+
+            if (legIndex === 0) {
+                waypointPassageWeather.push({
+                    waypointIndex: i,
+                    weather: weatherAtPassage,
+                    slot: passageSlot
+                });
+                waypointPassageSlots.set(i, passageSlot);
+            }
+
+            drawWind(startPoint.lat, startPoint.lon, wind.direction);
+
+            const isMotorSegment = wind.speed < MOTOR_WIND_THRESHOLD_KN;
+
+            const rawSegment = isMotorSegment
+                ? {
+                    type: 'motor',
+                    distance: distanceNm(startPoint.lat, startPoint.lon, endPoint.lat, endPoint.lon),
+                    speed: MOTOR_SPEED_KN,
+                    bearing: getBearing(startPoint, endPoint),
+                    timeHours: distanceNm(startPoint.lat, startPoint.lon, endPoint.lat, endPoint.lon) / MOTOR_SPEED_KN,
+                    points: [startPoint, endPoint]
+                }
+                : routeSegment(
+                    startPoint,
+                    endPoint,
+                    wind.direction,
+                    wind.speed,
+                    tackingTimeHours
+                );
+
+            const twa = isMotorSegment ? null : computeTWA(rawSegment.bearing, wind.direction);
+            const sailSetup = getSailRecommendation({
+                isMotorSegment,
+                tws: wind.speed,
+                twa,
+                sailModeValue: sailMode
+            });
+
+            const sailComment = getSailComment({
+                sailSetup,
+                sailModeValue: sailMode,
+                tws: wind.speed,
+                twa,
+                isMotorSegment
+            });
+
+            const sailFactor = getSailPerformanceFactor({
+                isMotorSegment,
+                sailModeValue: sailMode,
+                tws: wind.speed,
+                twa,
+                sailSetup
+            });
+
+            let segment = isMotorSegment
+                ? rawSegment
+                : {
+                    ...rawSegment,
+                    speed: rawSegment.speed * sailFactor,
+                    timeHours: rawSegment.timeHours / sailFactor
+                };
+
+            let segmentLatLngs = buildSegmentLatLngs(
+                { lat: startPoint.lat, lng: startPoint.lon },
+                { lat: endPoint.lat, lng: endPoint.lon },
+                segment
+            );
+
+            if (Number.isFinite(autoWpMinSpacingNm) && polylineLatLngCrossesLand(segmentLatLngs)) {
+                const directDistance = distanceNm(startPoint.lat, startPoint.lon, endPoint.lat, endPoint.lon);
+                const safeSpeed = Math.max(3, Number.isFinite(segment.speed) ? segment.speed : 6);
+                const safeDirectSegment = {
+                    type: 'sail-safe',
+                    distance: directDistance,
+                    speed: safeSpeed,
+                    bearing: getBearing(startPoint, endPoint),
+                    timeHours: directDistance / safeSpeed,
+                    points: [startPoint, endPoint]
+                };
+
+                segment = safeDirectSegment;
+                segmentLatLngs = buildSegmentLatLngs(
+                    { lat: startPoint.lat, lng: startPoint.lon },
+                    { lat: endPoint.lat, lng: endPoint.lon },
+                    segment
+                );
+
+                if (polylineLatLngCrossesLand(segmentLatLngs)) {
+                    alert(`Segment ${segmentsInfo.length + 1} invalide: la trajectoire coupe la terre. Ajoute un waypoint manuel ou baisse l'espacement WP auto.`);
+                    return;
+                }
+            }
+
+            routeSegmentsForDraw.push({
+                latlngs: segmentLatLngs,
+                windSpeed: wind.speed,
+                mode: segment.type,
+                waveHeight: weatherAtPassage.waveHeight,
+                waveDirection: weatherAtPassage.waveDirection,
+                segmentNumber: routeSegmentsForDraw.length + 1,
+                sailSetup,
+                sailComment,
+                departureHour: passageSlot.hour
+            });
+
+            fullRoute = fullRoute.concat(segment.points);
+            totalTime += segment.timeHours;
+            totalDistance += segment.distance;
+
+            const segmentArrivalDateTime = new Date(passageDateTime.getTime() + segment.timeHours * 3600 * 1000);
+
+            segmentsInfo.push({
+                number: segmentsInfo.length + 1,
+                startType: startMeta?.type || 'user',
+                startLabel: startMeta?.label || `WP ${i + 1}`,
+                startIcon: startMeta?.icon || '📍',
+                startMarkerRef: startMeta?.marker || null,
+                startLatLng: startMeta?.latlng || { lat: startPoint.lat, lng: startPoint.lon },
+                departureLabel: formatWeekdayHourUtc(passageDateTime),
+                arrivalLabel: formatWeekdayHourUtc(segmentArrivalDateTime),
+                distance: segment.distance.toFixed(2),
+                time: segment.timeHours.toFixed(2),
+                speed: segment.speed.toFixed(2),
+                bearing: Math.round(segment.bearing),
+                windSpeed: wind.speed.toFixed(1),
+                windDirection: Math.round(wind.direction),
+                type: segment.type,
+                sailSetup,
+                sailComment,
+                departureHour: passageSlot.hour
+            });
+        }
+    }
+
+    const arrivalDateTime = new Date(departureDateTime.getTime() + totalTime * 3600 * 1000);
+    const arrivalSlot = toDateAndHourUtc(arrivalDateTime);
+    const arrivalWeatherAtPassage = await getWeatherAtDateHour(
+        routePoints[routePoints.length - 1].lat,
+        routePoints[routePoints.length - 1].lng,
+        arrivalSlot.date,
+        arrivalSlot.hour
+    );
+
+    waypointPassageWeather.push({
+        waypointIndex: routePoints.length - 1,
+        weather: arrivalWeatherAtPassage,
+        slot: arrivalSlot
+    });
+    waypointPassageSlots.set(routePoints.length - 1, arrivalSlot);
+
+    drawWaypointWindDirections(waypointPassageWeather);
+
+    drawRouteByWindSpeed(routeSegmentsForDraw);
+    drawStrongWaveDirections(routeSegmentsForDraw);
+
+    let segmentsHtml = '<table id="segmentsTable" style="width:100%; border-collapse:collapse; margin-top:8px; font-size:8px;"><tr style="border-bottom:1px solid #ccc;"><th style="text-align:left; padding:2px; width:22px;">WP</th><th style="text-align:left; padding:2px; width:14px;">Seg</th><th style="text-align:right; padding:2px;">Départ</th><th style="text-align:right; padding:2px;">Arrivée</th><th style="text-align:right; padding:2px;">Cap</th><th style="text-align:right; padding:2px;">Dist.</th><th style="text-align:right; padding:2px;">Temps</th><th style="text-align:right; padding:2px;">Vit.</th><th style="text-align:right; padding:2px;">V.V</th><th style="text-align:right; padding:2px;">D.V</th><th style="text-align:left; padding:2px;">Voiles</th></tr>';
+    
+    segmentsInfo.forEach((seg, segIndex) => {
+        segmentsHtml += `<tr class="segment-row" data-seg-index="${segIndex}" style="border-bottom:1px solid #eee; cursor:pointer;"><td style="padding:2px; width:22px;" title="${seg.startLabel}">${seg.startIcon}</td><td style="padding:2px; width:14px;">${seg.number}</td><td style="text-align:right; padding:2px;">${seg.departureLabel}</td><td style="text-align:right; padding:2px;">${seg.arrivalLabel}</td><td style="text-align:right; padding:2px;">${seg.bearing}°</td><td style="text-align:right; padding:2px;">${seg.distance} nm</td><td style="text-align:right; padding:2px;">${seg.time} h</td><td style="text-align:right; padding:2px;">${seg.speed} kn</td><td style="text-align:right; padding:2px;">${seg.windSpeed} kn</td><td style="text-align:right; padding:2px;">${seg.windDirection}°</td><td style="padding:2px;">${seg.sailSetup}</td></tr>`;
+    });
+
+    segmentsHtml += '</table>';
+
+    const pressureSummary = buildPressureEvolutionSummary(waypointPassageWeather);
+    const weatherUpdatedAt = formatUtcDateTime(lastWeatherUpdateAt);
+
+    const waypointRowsForReport = waypointPassageWeather
+        .map(entry => {
+            const wpIndex = Number(entry.waypointIndex);
+            const isArrival = wpIndex === routePoints.length - 1;
+            const icon = isArrival ? '🏁' : '📍';
+            const label = isArrival ? `Arrivée (WP ${wpIndex + 1})` : `WP ${wpIndex + 1}`;
+            const weather = entry.weather || {};
+            return {
+                waypointIndex: wpIndex,
+                label: `${icon} ${label}`,
+                passageLabel: formatLocalSlotLabel(entry.slot),
+                windSpeed: Number.isFinite(weather.windSpeed) ? `${weather.windSpeed.toFixed(1)} kn` : 'N/A',
+                windDirection: Number.isFinite(weather.windDirection) ? `${Math.round(weather.windDirection)}° ${degreesToCardinalFr(weather.windDirection)}` : 'N/A',
+                pressure: Number.isFinite(weather.pressure) ? `${weather.pressure.toFixed(0)} hPa` : 'N/A',
+                waveHeight: Number.isFinite(weather.waveHeight) ? `${weather.waveHeight.toFixed(1)} m` : 'N/A',
+                summary: weatherCodeToLabel(weather.weatherCode)
+            };
+        })
+        .sort((a, b) => a.waypointIndex - b.waypointIndex)
+        .map(({ waypointIndex, ...rest }) => rest);
+
+    const routeNameInput = document.getElementById('routeNameInput');
+    const routeName = routeNameInput?.value?.trim() || 'Route CEIBO';
+
+    const routePolylineForReport = [];
+    routeSegmentsForDraw.forEach(seg => {
+        const latlngs = Array.isArray(seg?.latlngs) ? seg.latlngs : [];
+        latlngs.forEach(pair => {
+            const lat = Number(pair?.[0]);
+            const lng = Number(pair?.[1]);
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+            const previous = routePolylineForReport[routePolylineForReport.length - 1];
+            if (previous && previous.lat === lat && previous.lng === lng) return;
+            routePolylineForReport.push({ lat, lng });
+        });
+    });
+
+    const routeWaypointsForReport = [];
+    segmentsInfo.forEach(seg => {
+        const lat = Number(seg?.startLatLng?.lat);
+        const lng = Number(seg?.startLatLng?.lng);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+        routeWaypointsForReport.push({
+            lat,
+            lng,
+            label: seg.startLabel,
+            icon: seg.startIcon
+        });
+    });
+
+    const finalPoint = routePoints[routePoints.length - 1];
+    if (finalPoint) {
+        routeWaypointsForReport.push({
+            lat: Number(finalPoint.lat),
+            lng: Number(finalPoint.lng),
+            label: `Arrivée (WP ${routePoints.length})`,
+            icon: '🏁'
+        });
+    }
+
+    lastComputedReportData = {
+        routeName,
+        computedAt: new Date().toISOString(),
+        departureIso: departureDateTime.toISOString(),
+        arrivalIso: arrivalDateTime.toISOString(),
+        weatherUpdatedAt: lastWeatherUpdateAt,
+        metrics: {
+            totalDistanceNm: totalDistance.toFixed(2),
+            totalTimeHours: totalTime,
+            totalTimeLabel: formatDurationHours(totalTime),
+            segmentCount: segmentsInfo.length,
+            generatedWaypointCount: generatedAutoWaypointCount,
+            pressureSummary
+        },
+        segments: segmentsInfo.map(seg => ({
+            number: seg.number,
+            startIcon: seg.startIcon,
+            startLabel: seg.startLabel,
+            departureLabel: seg.departureLabel,
+            arrivalLabel: seg.arrivalLabel,
+            bearing: seg.bearing,
+            distance: seg.distance,
+            time: seg.time,
+            speed: seg.speed,
+            sailSetup: seg.sailSetup
+        })),
+        waypoints: waypointRowsForReport,
+        routeVector: {
+            polyline: routePolylineForReport,
+            waypoints: routeWaypointsForReport
+        }
+    };
+
+    document.getElementById("info").innerHTML =
+        `<div class="segment-summary">
+            <strong>Segments: ${routePoints.length - 1}</strong><br>
+            <strong>Distance totale: ${totalDistance.toFixed(2)} nm</strong><br>
+            <strong>Temps total: ${totalTime.toFixed(2)} h</strong><br>
+            <strong>WP auto générés: ${generatedAutoWaypointCount}</strong><br>
+            <strong>Météo (dernière MAJ): ${weatherUpdatedAt}</strong><br>
+            <strong>Évolution pression: ${pressureSummary}</strong>
+        </div>` +
+        segmentsHtml;
+
+    const segmentRows = document.querySelectorAll('#segmentsTable .segment-row');
+    segmentRows.forEach(row => {
+        row.addEventListener('click', async () => {
+            const rawSegIndex = row.getAttribute('data-seg-index');
+
+            const segIndex = Number(rawSegIndex);
+            const seg = segmentsInfo[segIndex];
+            if (!seg?.startLatLng) return;
+
+            const latlng = seg.startLatLng;
+            map.panTo(latlng, { animate: true, duration: 0.45 });
+
+            const marker = seg.startMarkerRef;
+            if (!marker) return;
+            await openWaypointWeatherPopup(marker);
+        });
+    });
+
+    renderWindSpeedLegend();
+
+    updateArrivalPointWeather(totalTime);
+}
+
+// =====================
+// GET WIND
+// =====================
+
+async function getWind(lat, lon) {
+
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&start_date=${departureDate}&end_date=${departureDate}&hourly=windspeed_10m,winddirection_10m&windspeed_unit=kn&timezone=UTC`;
+
+    const response = await fetch(url);
+    const data = await response.json();
+
+    // Extraire l'heure de départ (format HH:MM)
+    const hourIndex = parseInt(departureTime.split(':')[0]);
+    const windSpeed = data.hourly.windspeed_10m[hourIndex] || 10;
+    const windDirection = data.hourly.winddirection_10m[hourIndex] || 0;
+
+    return {
+        speed: windSpeed,
+        direction: windDirection
+    };
+}
+
+function toDateAndHourUtc(dateObj) {
+    const iso = dateObj.toISOString();
+    const date = iso.slice(0, 10);
+    const hour = `${String(dateObj.getUTCHours()).padStart(2, '0')}:00`;
+    return { date, hour };
+}
+
+function formatWeekdayHourUtc(dateObj) {
+    const weekday = dateObj.toLocaleDateString('fr-FR', { weekday: 'short' }).replace('.', '');
+    const hour = String(dateObj.getHours()).padStart(2, '0');
+    return `${weekday} ${hour}h`;
+}
+
+function formatLocalSlotLabel(slot) {
+    if (!slot?.date || !slot?.hour) return 'N/A';
+    const dateObj = new Date(`${slot.date}T${slot.hour}:00Z`);
+    if (Number.isNaN(dateObj.getTime())) return 'N/A';
+    return formatWeekdayHourUtc(dateObj);
+}
+
+function buildPressureEvolutionSummary(waypointPassageWeather) {
+    const pressureSeries = waypointPassageWeather
+        .map(entry => entry.weather?.pressure)
+        .filter(value => Number.isFinite(value));
+
+    if (pressureSeries.length < 2) return 'Données insuffisantes';
+
+    const firstPressure = pressureSeries[0];
+    const lastPressure = pressureSeries[pressureSeries.length - 1];
+    const delta = lastPressure - firstPressure;
+    const roundedDelta = `${delta >= 0 ? '+' : ''}${delta.toFixed(1)} hPa`;
+
+    let trend = 'stable';
+    if (delta > 0.8) trend = 'hausse';
+    if (delta < -0.8) trend = 'baisse';
+
+    return `${firstPressure.toFixed(0)} → ${lastPressure.toFixed(0)} hPa (${roundedDelta}, ${trend})`;
+}
+
+function weatherCodeToLabel(code) {
+    const labels = {
+        0: 'Ciel dégagé',
+        1: 'Peu nuageux',
+        2: 'Partiellement nuageux',
+        3: 'Couvert',
+        45: 'Brouillard',
+        48: 'Brouillard givrant',
+        51: 'Bruine légère',
+        53: 'Bruine modérée',
+        55: 'Bruine forte',
+        61: 'Pluie faible',
+        63: 'Pluie modérée',
+        65: 'Pluie forte',
+        71: 'Neige faible',
+        73: 'Neige modérée',
+        75: 'Neige forte',
+        80: 'Averses faibles',
+        81: 'Averses modérées',
+        82: 'Averses fortes',
+        95: 'Orage'
+    };
+
+    return labels[code] || 'Conditions variables';
+}
+
+function degreesToCardinalFr(degrees) {
+    if (!Number.isFinite(degrees)) return 'N/A';
+    const directions = ['Nord', 'Nord-Est', 'Est', 'Sud-Est', 'Sud', 'Sud-Ouest', 'Ouest', 'Nord-Ouest'];
+    const normalized = ((degrees % 360) + 360) % 360;
+    const index = Math.round(normalized / 45) % 8;
+    return directions[index];
+}
+
+function getWeatherCacheKey(lat, lon) {
+    const roundedLat = Number(lat).toFixed(4);
+    const roundedLon = Number(lon).toFixed(4);
+    return `${roundedLat},${roundedLon}|${departureDate}|${departureTime}`;
+}
+
+function getWeatherCacheKeyAtDateHour(lat, lon, date, hour) {
+    const roundedLat = Number(lat).toFixed(4);
+    const roundedLon = Number(lon).toFixed(4);
+    return `${roundedLat},${roundedLon}|${date}|${hour}`;
+}
+
+async function getWeatherAtDateHour(lat, lon, date, hour) {
+    const cacheKey = getWeatherCacheKeyAtDateHour(lat, lon, date, hour);
+    if (weatherCache.has(cacheKey)) return weatherCache.get(cacheKey);
+
+    const forecastUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&start_date=${date}&end_date=${date}&hourly=temperature_2m,windspeed_10m,winddirection_10m,windgusts_10m,precipitation,weather_code,surface_pressure&windspeed_unit=kn&timezone=UTC`;
+    const marineUrl = `https://marine-api.open-meteo.com/v1/marine?latitude=${lat}&longitude=${lon}&start_date=${date}&end_date=${date}&hourly=wave_height,wave_direction,wave_period&timezone=UTC`;
+
+    const [data, marineData] = await Promise.all([
+        fetch(forecastUrl).then(response => response.json()),
+        fetch(marineUrl).then(response => response.json()).catch(() => null)
+    ]);
+
+    const hourIndex = parseInt(hour.split(':')[0], 10);
+
+    const fetchedAt = new Date().toISOString();
+
+    const weather = {
+        temperature: data?.hourly?.temperature_2m?.[hourIndex],
+        windSpeed: data?.hourly?.windspeed_10m?.[hourIndex],
+        windGust: data?.hourly?.windgusts_10m?.[hourIndex],
+        windDirection: data?.hourly?.winddirection_10m?.[hourIndex],
+        precipitation: data?.hourly?.precipitation?.[hourIndex],
+        pressure: data?.hourly?.surface_pressure?.[hourIndex],
+        waveHeight: marineData?.hourly?.wave_height?.[hourIndex],
+        waveDirection: marineData?.hourly?.wave_direction?.[hourIndex],
+        wavePeriod: marineData?.hourly?.wave_period?.[hourIndex],
+        weatherCode: data?.hourly?.weather_code?.[hourIndex],
+        updatedAt: fetchedAt
+    };
+
+    lastWeatherUpdateAt = fetchedAt;
+
+    weatherCache.set(cacheKey, weather);
+    return weather;
+}
+
+async function getWeatherAtWaypoint(lat, lon) {
+    return getWeatherAtDateHour(lat, lon, departureDate, departureTime);
+}
+
+function getWaypointSlotByMarker(marker) {
+    if (marker?._ceiboPassageSlot) return marker._ceiboPassageSlot;
+
+    const index = markers.indexOf(marker);
+    if (index === -1) return null;
+    return waypointPassageSlots.get(index) || null;
+}
+
+async function getWeatherForMarker(marker) {
+    const current = marker.getLatLng();
+    const slot = getWaypointSlotByMarker(marker);
+
+    if (slot) {
+        const weather = await getWeatherAtDateHour(current.lat, current.lng, slot.date, slot.hour);
+        return {
+            weather,
+            referenceLabel: formatLocalSlotLabel(slot)
+        };
+    }
+
+    const weather = await getWeatherAtWaypoint(current.lat, current.lng);
+    const fallbackSlot = { date: departureDate, hour: departureTime };
+    return {
+        weather,
+        referenceLabel: formatLocalSlotLabel(fallbackSlot)
+    };
+}
+
+async function getCurrentWeatherAtWaypoint(lat, lon) {
+    const now = new Date();
+    const { date, hour } = toDateAndHourUtc(now);
+    return getWeatherAtDateHour(lat, lon, date, hour);
+}
+
+function formatWeatherTooltipContent(weather, referenceLabel) {
+    const temp = Number.isFinite(weather.temperature) ? `${weather.temperature.toFixed(1)}°C` : 'N/A';
+    const windSpeed = Number.isFinite(weather.windSpeed) ? `${weather.windSpeed.toFixed(1)} kn` : 'N/A';
+    const windGust = Number.isFinite(weather.windGust) ? `${weather.windGust.toFixed(1)} kn` : 'N/A';
+    const windDirection = Number.isFinite(weather.windDirection) ? `${Math.round(weather.windDirection)}°` : 'N/A';
+    const windCardinal = degreesToCardinalFr(weather.windDirection);
+    const precipitation = Number.isFinite(weather.precipitation) ? `${weather.precipitation.toFixed(1)} mm` : 'N/A';
+    const pressure = Number.isFinite(weather.pressure) ? `${weather.pressure.toFixed(0)} hPa` : 'N/A';
+    const waveHeight = Number.isFinite(weather.waveHeight) ? `${weather.waveHeight.toFixed(1)} m` : 'N/A';
+    const wavePeriod = Number.isFinite(weather.wavePeriod) ? `${weather.wavePeriod.toFixed(1)} s` : 'N/A';
+    const waveDirection = Number.isFinite(weather.waveDirection) ? `${Math.round(weather.waveDirection)}°` : 'N/A';
+    const waveCardinal = degreesToCardinalFr(weather.waveDirection);
+    const seaComfort = getSeaComfortLevel(weather);
+    const passageRef = referenceLabel || formatLocalSlotLabel({ date: departureDate, hour: departureTime });
+    const summary = weatherCodeToLabel(weather.weatherCode);
+
+    return `<strong>Météo</strong><br>${summary}<br>Temp: ${temp}<br>Vent: ${windSpeed} (${windDirection}, ${windCardinal})<br>Rafales: ${windGust}<br>Pluie: ${precipitation}<br>Pression: ${pressure}<br>Houle: ${waveHeight} · ${wavePeriod} · ${waveDirection} (${waveCardinal})<br>${seaComfort}<br>Passage WP: ${passageRef}`;
+}
+
+function formatUtcDateTime(isoString) {
+    if (!isoString) return 'N/A';
+    const date = new Date(isoString);
+    if (Number.isNaN(date.getTime())) return 'N/A';
+
+    return `${date.toLocaleDateString('fr-FR')} ${date.toLocaleTimeString('fr-FR', {
+        hour: '2-digit',
+        minute: '2-digit'
+    })}`;
+}
+
+function renderWaypointWeatherInfo(marker, weather, referenceLabel) {
+    const weatherContainer = document.getElementById('waypointWeatherInfo');
+    if (!weatherContainer) return;
+
+    const current = marker.getLatLng();
+    const index = markers.indexOf(marker);
+    const waypointLabel = index !== -1 ? `Waypoint ${index + 1}` : 'Waypoint';
+
+    const temp = Number.isFinite(weather.temperature) ? `${weather.temperature.toFixed(1)}°C` : 'N/A';
+    const windSpeed = Number.isFinite(weather.windSpeed) ? `${weather.windSpeed.toFixed(1)} kn` : 'N/A';
+    const windGust = Number.isFinite(weather.windGust) ? `${weather.windGust.toFixed(1)} kn` : 'N/A';
+    const windDirectionDeg = Number.isFinite(weather.windDirection) ? `${Math.round(weather.windDirection)}°` : 'N/A';
+    const windDirectionCardinal = degreesToCardinalFr(weather.windDirection);
+    const precipitation = Number.isFinite(weather.precipitation) ? `${weather.precipitation.toFixed(1)} mm` : 'N/A';
+    const pressure = Number.isFinite(weather.pressure) ? `${weather.pressure.toFixed(0)} hPa` : 'N/A';
+    const waveHeight = Number.isFinite(weather.waveHeight) ? `${weather.waveHeight.toFixed(1)} m` : 'N/A';
+    const wavePeriod = Number.isFinite(weather.wavePeriod) ? `${weather.wavePeriod.toFixed(1)} s` : 'N/A';
+    const waveDirectionDeg = Number.isFinite(weather.waveDirection) ? `${Math.round(weather.waveDirection)}°` : 'N/A';
+    const waveDirectionCardinal = degreesToCardinalFr(weather.waveDirection);
+    const seaComfort = getSeaComfortLevel(weather);
+    const passageRef = referenceLabel || formatLocalSlotLabel({ date: departureDate, hour: departureTime });
+    const summary = weatherCodeToLabel(weather.weatherCode);
+
+    weatherContainer.innerHTML =
+        `<strong>${waypointLabel}</strong><br>` +
+        `${current.lat.toFixed(4)}, ${current.lng.toFixed(4)}<br>` +
+        `<strong>${summary}</strong><br>` +
+        `Température: ${temp}<br>` +
+        `Vent: ${windSpeed} — ${windDirectionDeg} (${windDirectionCardinal})<br>` +
+        `Rafales: ${windGust}<br>` +
+        `Pluie: ${precipitation}<br>` +
+        `Pression: ${pressure}<br>` +
+        `Houle: ${waveHeight} · ${wavePeriod} · ${waveDirectionDeg} (${waveDirectionCardinal})<br>` +
+        `${seaComfort}<br>` +
+        `Passage WP: ${passageRef}`;
+}
+
+function formatWaypointPopupContent(marker, weather, referenceLabel) {
+    const current = marker.getLatLng();
+    const index = markers.indexOf(marker);
+    const waypointLabel = marker?._ceiboLabel || (index !== -1 ? `Waypoint ${index + 1}` : 'Waypoint');
+
+    return `<strong>${waypointLabel}</strong><br>${current.lat.toFixed(4)}, ${current.lng.toFixed(4)}<br>${formatWeatherTooltipContent(weather, referenceLabel).replace('<strong>Météo</strong><br>', '')}`;
+}
+
+async function openWaypointWeatherPopup(marker) {
+    const markerLabel = marker?._ceiboLabel || 'Waypoint';
+    marker.bindPopup(`<strong>${markerLabel}</strong><br>Chargement météo...`, { maxWidth: 340, autoPan: false });
+    marker.openPopup();
+
+    try {
+        const result = await getWeatherForMarker(marker);
+        marker.setPopupContent(formatWaypointPopupContent(marker, result.weather, result.referenceLabel));
+        marker.openPopup();
+    } catch (error) {
+        marker.setPopupContent('<strong>Waypoint</strong><br>Météo indisponible');
+        marker.openPopup();
+    }
+}
+
+function createWaypointMarker(latlng) {
+    const marker = L.marker(latlng, { draggable: true }).addTo(map);
+
+    marker.on('dragend', function() {
+        const index = markers.indexOf(marker);
+        if (index !== -1) {
+            routePoints[index] = marker.getLatLng();
+            selectUserWaypoint(marker);
+            invalidateComputedRouteDisplay();
+        }
+    });
+
+    marker.on('mouseover', async function() {
+        marker.bindTooltip('Chargement météo...', { direction: 'top', opacity: 0.95 });
+        marker.openTooltip();
+
+        try {
+            const result = await getWeatherForMarker(marker);
+            marker.setTooltipContent(formatWeatherTooltipContent(result.weather, result.referenceLabel));
+            marker.openTooltip();
+        } catch (error) {
+            marker.setTooltipContent('Météo indisponible');
+            marker.openTooltip();
+        }
+    });
+
+    marker.on('mouseout', function() {
+        marker.closeTooltip();
+    });
+
+    marker.on('click', async function() {
+        selectUserWaypoint(marker);
+        try {
+            const result = await getWeatherForMarker(marker);
+            renderWaypointWeatherInfo(marker, result.weather, result.referenceLabel);
+        } catch (error) {
+            const weatherContainer = document.getElementById('waypointWeatherInfo');
+            if (weatherContainer) {
+                weatherContainer.innerHTML = '<strong>Waypoint</strong><br>Météo indisponible';
+            }
+        }
+    });
+
+    marker.on('contextmenu', function() {
+        const index = markers.indexOf(marker);
+        deleteUserWaypointAtIndex(index);
+    });
+
+    return marker;
+}
+
+function clearGeneratedWaypointMarkers() {
+    generatedWaypointMarkers.forEach(marker => {
+        if (map.hasLayer(marker)) map.removeLayer(marker);
+    });
+    generatedWaypointMarkers = [];
+}
+
+function createGeneratedWaypointMarker(latlng, label, badgeText) {
+    const generatedIcon = L.divIcon({
+        className: 'generated-waypoint-map-icon',
+        html: `<div class="generated-waypoint-map-icon__dot">${badgeText}</div>`,
+        iconSize: [24, 20],
+        iconAnchor: [12, 10]
+    });
+
+    const marker = L.marker(latlng, {
+        icon: generatedIcon,
+        keyboard: false,
+        zIndexOffset: 300
+    }).addTo(map);
+
+    marker._ceiboLabel = label;
+
+    marker.on('mouseover', async function() {
+        marker.bindTooltip('Chargement météo...', { direction: 'top', opacity: 0.95 });
+        marker.openTooltip();
+
+        try {
+            const result = await getWeatherForMarker(marker);
+            marker.setTooltipContent(formatWeatherTooltipContent(result.weather, result.referenceLabel));
+            marker.openTooltip();
+        } catch (error) {
+            marker.setTooltipContent('Météo indisponible');
+            marker.openTooltip();
+        }
+    });
+
+    marker.on('mouseout', function() {
+        marker.closeTooltip();
+    });
+
+    marker.on('click', async function() {
+        await openWaypointWeatherPopup(marker);
+        try {
+            const result = await getWeatherForMarker(marker);
+            renderWaypointWeatherInfo(marker, result.weather, result.referenceLabel);
+        } catch (error) {
+            const weatherContainer = document.getElementById('waypointWeatherInfo');
+            if (weatherContainer) {
+                weatherContainer.innerHTML = `<strong>${label}</strong><br>Météo indisponible`;
+            }
+        }
+    });
+
+    return marker;
+}
+
+function clearWaypointWindDirectionLayers() {
+    waypointWindDirectionLayers.forEach(layer => {
+        if (map.hasLayer(layer)) map.removeLayer(layer);
+    });
+    waypointWindDirectionLayers = [];
+}
+
+function drawWaypointWindDirections(waypointPassageWeather) {
+    clearWaypointWindDirectionLayers();
+
+    waypointPassageWeather.forEach(entry => {
+        const marker = markers[entry.waypointIndex];
+        const windDirection = entry.weather?.windDirection;
+
+        if (!marker || !Number.isFinite(windDirection)) return;
+
+        const iconDirection = (windDirection - 90 + 360) % 360;
+        const sourceCardinal = degreesToCardinalFr(windDirection);
+        const windSpeed = entry.weather?.windSpeed;
+        const windSpeedLabel = Number.isFinite(windSpeed) ? `${windSpeed.toFixed(1)} kn` : 'N/A';
+        const icon = L.divIcon({
+            className: 'wind-direction-waypoint',
+            html: `<div class="wind-direction-waypoint__arrow" style="transform: rotate(${iconDirection}deg);">➤</div>`,
+            iconSize: [16, 16],
+            iconAnchor: [8, 8]
+        });
+
+        const arrowLayer = L.marker(marker.getLatLng(), {
+            icon,
+            interactive: true,
+            keyboard: false,
+            zIndexOffset: 1000
+        }).addTo(map);
+
+        arrowLayer.bindTooltip(`Vent de ${sourceCardinal} · ${windSpeedLabel}`, {
+            direction: 'top',
+            opacity: 0.95
+        });
+
+        waypointWindDirectionLayers.push(arrowLayer);
+    });
+}
+
+async function updateArrivalPointWeather(totalTimeHours) {
+    if (!markers.length) return;
+
+    const arrivalMarker = markers[markers.length - 1];
+    const destination = arrivalMarker.getLatLng();
+    const departureDateTime = new Date(`${departureDate}T${departureTime}:00`);
+
+    if (Number.isNaN(departureDateTime.getTime())) return;
+
+    const arrivalDateTime = new Date(departureDateTime.getTime() + totalTimeHours * 3600 * 1000);
+    const arrivalSlot = toDateAndHourUtc(arrivalDateTime);
+
+    try {
+        const [currentWeather, arrivalWeather] = await Promise.all([
+            getCurrentWeatherAtWaypoint(destination.lat, destination.lng),
+            getWeatherAtDateHour(destination.lat, destination.lng, arrivalSlot.date, arrivalSlot.hour)
+        ]);
+
+        const now = new Date();
+        const currentRef = formatWeekdayHourUtc(now);
+        const arrivalRef = formatLocalSlotLabel(arrivalSlot);
+
+        const currentLine = formatWeatherTooltipContent(currentWeather, currentRef);
+        const arrivalLine = formatWeatherTooltipContent(arrivalWeather, arrivalRef);
+
+        const popupContent =
+            `<strong>Point d'arrivée</strong><br>` +
+            `<strong>Météo actuelle</strong><br>${currentLine.replace('<strong>Météo</strong><br>', '')}<br><br>` +
+            `<strong>Météo prévue (${arrivalRef})</strong><br>${arrivalLine.replace('<strong>Météo</strong><br>', '')}`;
+
+        arrivalMarker.bindPopup(popupContent, { maxWidth: 320 });
+        arrivalMarker.openPopup();
+    } catch (error) {
+        arrivalMarker.bindPopup('<strong>Point d\'arrivée</strong><br>Météo indisponible', { maxWidth: 300 });
+    }
+}
+
+// =====================
+// DRAW ROUTE
+// =====================
+
+function drawRoute(points) {
+
+    if (routeLayer) map.removeLayer(routeLayer);
+
+    const latlngs = points.map(p => [p.lat, p.lon ?? p.lng]);
+
+    routeLayer = L.polyline(latlngs, {
+        color: 'orange',
+        weight: 3
+    }).addTo(map);
+
+    routeLayer.on('click', function(e) {
+        if (e?.originalEvent) L.DomEvent.stop(e.originalEvent);
+
+        const insertIndex = getLogicalInsertionIndexFromRouteClick(e.latlng);
+        addUserWaypoint(e.latlng, { insertIndex });
+    });
+}
+
+function buildSegmentLatLngs(start, end, segment) {
+    const segmentPoints = Array.isArray(segment?.points) ? segment.points : [];
+    const latlngs = [[start.lat, start.lng]];
+
+    segmentPoints.forEach(point => {
+        const lat = point.lat;
+        const lon = point.lon ?? point.lng;
+        if (Number.isFinite(lat) && Number.isFinite(lon)) {
+            const previous = latlngs[latlngs.length - 1];
+            if (!previous || previous[0] !== lat || previous[1] !== lon) {
+                latlngs.push([lat, lon]);
+            }
+        }
+    });
+
+    const endLatLng = [end.lat, end.lng];
+    const last = latlngs[latlngs.length - 1];
+    if (!last || last[0] !== endLatLng[0] || last[1] !== endLatLng[1]) {
+        latlngs.push(endLatLng);
+    }
+
+    return latlngs;
+}
+
+function getWindSpeedColor(speed) {
+    if (!Number.isFinite(speed)) return '#9e9e9e';
+    if (speed < 8) return '#2ecc71';
+    if (speed < 14) return '#f1c40f';
+    if (speed < 20) return '#e67e22';
+    return '#e74c3c';
+}
+
+function getRouteSegmentColor(segment) {
+    if (segment?.mode === 'motor') return '#ff4fa3';
+    return getWindSpeedColor(segment?.windSpeed);
+}
+
+function drawRouteByWindSpeed(routeSegments) {
+    if (routeLayer) map.removeLayer(routeLayer);
+
+    const polylines = routeSegments
+        .filter(seg => Array.isArray(seg.latlngs) && seg.latlngs.length >= 2)
+        .map(seg => {
+            const polyline = L.polyline(seg.latlngs, {
+                color: getRouteSegmentColor(seg),
+                weight: 4,
+                opacity: 0.95
+            });
+
+            const popupText =
+                `<strong>Segment ${seg.segmentNumber}</strong><br>` +
+                `Départ: ${seg.departureHour} UTC<br>` +
+                `Réglage voiles: ${seg.sailSetup}<br>` +
+                `${seg.sailComment}`;
+
+            polyline.bindPopup(popupText, { maxWidth: 340 });
+
+            polyline.on('click', function(e) {
+                if (e?.originalEvent) L.DomEvent.stop(e.originalEvent);
+
+                const segmentNumber = Number(seg?.segmentNumber);
+                const insertIndex = Number.isInteger(segmentNumber) && segmentNumber >= 1
+                    ? Math.min(Math.max(segmentNumber, 1), routePoints.length)
+                    : getLogicalInsertionIndexFromRouteClick(e.latlng);
+
+                addUserWaypoint(e.latlng, { insertIndex });
+            });
+
+            return polyline;
+        });
+
+    routeLayer = L.layerGroup(polylines).addTo(map);
+
+    if (polylines.length > 0) {
+        const bounds = L.featureGroup(polylines).getBounds();
+        if (bounds.isValid()) {
+            lastRouteBounds = bounds;
+            map.fitBounds(bounds, { padding: [30, 30] });
+        }
+    }
+}
+
+function recenterOnRoute() {
+    if (!lastRouteBounds || !lastRouteBounds.isValid()) return;
+    map.fitBounds(lastRouteBounds, { padding: [30, 30] });
+}
+
+function clearWaveDirectionSegmentLayers() {
+    waveDirectionSegmentLayers.forEach(layer => {
+        if (map.hasLayer(layer)) map.removeLayer(layer);
+    });
+    waveDirectionSegmentLayers = [];
+}
+
+function getSegmentMidpoint(latlngs) {
+    if (!Array.isArray(latlngs) || latlngs.length < 2) return null;
+    const middleIndex = Math.floor((latlngs.length - 1) / 2);
+    const a = latlngs[middleIndex];
+    const b = latlngs[middleIndex + 1] || a;
+    return {
+        lat: (a[0] + b[0]) / 2,
+        lng: (a[1] + b[1]) / 2
+    };
+}
+
+function drawStrongWaveDirections(routeSegments) {
+    clearWaveDirectionSegmentLayers();
+
+    routeSegments.forEach(seg => {
+        const waveHeight = seg?.waveHeight;
+        const waveDirection = seg?.waveDirection;
+
+        if (!Number.isFinite(waveHeight) || waveHeight < STRONG_WAVE_THRESHOLD_M) return;
+        if (!Number.isFinite(waveDirection)) return;
+
+        const mid = getSegmentMidpoint(seg.latlngs);
+        if (!mid) return;
+
+        const iconDirection = (waveDirection - 90 + 360) % 360;
+        const sourceCardinal = degreesToCardinalFr(waveDirection);
+        const icon = L.divIcon({
+            className: 'wave-direction-segment',
+            html: `<div class="wave-direction-segment__arrow" style="transform: rotate(${iconDirection}deg);">➵</div>`,
+            iconSize: [16, 16],
+            iconAnchor: [8, 8]
+        });
+
+        const waveLayer = L.marker([mid.lat, mid.lng], {
+            icon,
+            interactive: true,
+            keyboard: false,
+            zIndexOffset: 900
+        }).addTo(map);
+
+        waveLayer.bindTooltip(`Houle forte de ${sourceCardinal} · ${waveHeight.toFixed(1)} m`, {
+            direction: 'top',
+            opacity: 0.95
+        });
+
+        waveDirectionSegmentLayers.push(waveLayer);
+    });
+}
+
+function renderWindSpeedLegend() {
+    const legend = document.getElementById('windSpeedLegend');
+    if (!legend) return;
+
+    legend.innerHTML =
+        '<strong>Légende vent (route)</strong>' +
+        '<div class="wind-legend-row"><span class="wind-legend-swatch" style="background:#ff4fa3"></span><span>Moteur (&lt; 5 kn) · 7 kn</span></div>' +
+        '<div class="wind-legend-row"><span class="wind-legend-swatch" style="background:#2ecc71"></span><span>&lt; 8 kn</span></div>' +
+        '<div class="wind-legend-row"><span class="wind-legend-swatch" style="background:#f1c40f"></span><span>8–14 kn</span></div>' +
+        '<div class="wind-legend-row"><span class="wind-legend-swatch" style="background:#e67e22"></span><span>14–20 kn</span></div>' +
+        '<div class="wind-legend-row"><span class="wind-legend-swatch" style="background:#e74c3c"></span><span>&gt; 20 kn</span></div>';
+}
+
+// =====================
+// DRAW WIND ARROW
+// =====================
+
+function drawWind(lat, lon, direction) {
+
+    if (windLayer) map.removeLayer(windLayer);
+
+    const length = 0.3;
+
+    const endLat = lat + length * Math.cos((direction - 180) * Math.PI/180);
+    const endLon = lon + length * Math.sin((direction - 180) * Math.PI/180);
+
+    windLayer = L.polyline(
+        [[lat, lon], [endLat, endLon]],
+        {color: 'blue', weight: 3}
+    ).addTo(map);
+}
+
+// =====================
+// SAVE / LOAD ROUTES
+// =====================
+
+function getSavedRoutes() {
+    const raw = localStorage.getItem('savedRoutes');
+    return raw ? JSON.parse(raw) : [];
+}
+
+function setSavedRoutes(list) {
+    localStorage.setItem('savedRoutes', JSON.stringify(list));
+}
+
+function refreshSavedList() {
+    const sel = document.getElementById('savedRoutesSelect');
+    if (!sel) return;
+    const previousIndex = sel.selectedIndex;
+    sel.innerHTML = '';
+    const saved = getSavedRoutes();
+    saved.forEach((r, i) => {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.text = `${r.name} (${r.date} ${r.time})`;
+        sel.appendChild(opt);
+    });
+
+    if (saved.length === 0) {
+        currentLoadedRouteIndex = -1;
+        return;
+    }
+
+    if (Number.isInteger(currentLoadedRouteIndex) && currentLoadedRouteIndex >= 0 && currentLoadedRouteIndex < saved.length) {
+        sel.selectedIndex = currentLoadedRouteIndex;
+        return;
+    }
+
+    if (Number.isInteger(previousIndex) && previousIndex >= 0 && previousIndex < saved.length) {
+        sel.selectedIndex = previousIndex;
+    }
+}
+
+function saveRoute() {
+    if (routePoints.length === 0) return alert('Aucun waypoint à sauvegarder');
+    const nameInput = document.getElementById('routeNameInput');
+    const rawName = (nameInput?.value || '').trim();
+    const saved = getSavedRoutes();
+    const canUpdateLoadedRoute = Number.isInteger(currentLoadedRouteIndex)
+        && currentLoadedRouteIndex >= 0
+        && currentLoadedRouteIndex < saved.length;
+    const fallbackName = `Route ${new Date().toLocaleString()}`;
+    const existingName = canUpdateLoadedRoute ? String(saved[currentLoadedRouteIndex]?.name || '').trim() : '';
+    const name = rawName || existingName || fallbackName;
+
+    const payload = {
+        name,
+        date: departureDate,
+        time: departureTime,
+        tackingTimeHours,
+        points: routePoints.map(p => ({ lat: p.lat, lon: p.lng ?? p.lon })) ,
+        createdAt: canUpdateLoadedRoute
+            ? (saved[currentLoadedRouteIndex]?.createdAt || new Date().toISOString())
+            : new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+    };
+
+    if (canUpdateLoadedRoute) {
+        saved[currentLoadedRouteIndex] = {
+            ...saved[currentLoadedRouteIndex],
+            ...payload
+        };
+    } else {
+        saved.push(payload);
+        currentLoadedRouteIndex = saved.length - 1;
+    }
+
+    setSavedRoutes(saved);
+    refreshSavedList();
+
+    const sel = document.getElementById('savedRoutesSelect');
+    if (sel && currentLoadedRouteIndex >= 0 && currentLoadedRouteIndex < saved.length) {
+        sel.selectedIndex = currentLoadedRouteIndex;
+    }
+
+    alert(canUpdateLoadedRoute ? `Route mise à jour: ${name}` : `Route sauvegardée: ${name}`);
+}
+
+function clearCurrentRoute() {
+    // remove markers
+    markers.forEach(m => map.removeLayer(m));
+    markers = [];
+    routePoints = [];
+    selectedUserWaypointIndex = -1;
+    currentLoadedRouteIndex = -1;
+    waypointPassageSlots.clear();
+    lastRouteBounds = null;
+    lastComputedReportData = null;
+    clearWaypointWindDirectionLayers();
+    clearWaveDirectionSegmentLayers();
+    clearGeneratedWaypointMarkers();
+    clearArrivalPoiMarkers();
+    if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
+    const weatherContainer = document.getElementById('waypointWeatherInfo');
+    if (weatherContainer) weatherContainer.innerHTML = '';
+    const windLegend = document.getElementById('windSpeedLegend');
+    if (windLegend) windLegend.innerHTML = '';
+    const suggestionBox = document.getElementById('departureSuggestionInfo');
+    lastDepartureSuggestion = null;
+    if (suggestionBox) {
+        suggestionBox.textContent = 'Suggestion départ: en attente';
+        suggestionBox.classList.remove('suggestion-clickable');
+    }
+    const arrivalSummary = document.getElementById('arrivalSummary');
+    if (arrivalSummary) arrivalSummary.textContent = 'Analyse mouillage: en attente';
+    const anchorageContainer = document.getElementById('anchorageRecommendations');
+    if (anchorageContainer) anchorageContainer.innerHTML = '';
+    const restaurants = document.getElementById('nearbyRestaurants');
+    if (restaurants) restaurants.innerHTML = '';
+    const shops = document.getElementById('nearbyShops');
+    if (shops) shops.innerHTML = '';
+    updateSelectedWaypointInfo();
+}
+
+function loadRoute(index) {
+    const saved = getSavedRoutes();
+    if (!saved || !saved[index]) return alert('Aucune route sélectionnée');
+    const r = saved[index];
+
+    clearCurrentRoute();
+    waypointPassageSlots.clear();
+    lastRouteBounds = null;
+
+    r.points.forEach(pt => {
+        const lat = pt.lat;
+        const lon = pt.lon;
+        const marker = createWaypointMarker([lat, lon]);
+        markers.push(marker);
+        routePoints.push(marker.getLatLng());
+    });
+
+    selectedUserWaypointIndex = -1;
+    currentLoadedRouteIndex = index;
+    updateSelectedWaypointInfo();
+
+    const nameInput = document.getElementById('routeNameInput');
+    if (nameInput) nameInput.value = r.name || '';
+
+    // restore UI values (keep current selected date)
+    departureTime = normalizeHourTime(r.time);
+    updateDepartureDateTimeInput();
+    document.getElementById('tackingTimeInput').value = r.tackingTimeHours;
+    tackingTimeHours = r.tackingTimeHours;
+
+    // draw polyline between waypoints
+    drawRoute(routePoints);
+}
+
+function deleteRoute(index) {
+    const saved = getSavedRoutes();
+    if (!saved || !saved[index]) return;
+    saved.splice(index, 1);
+
+    if (currentLoadedRouteIndex === index) {
+        currentLoadedRouteIndex = -1;
+    } else if (currentLoadedRouteIndex > index) {
+        currentLoadedRouteIndex -= 1;
+    }
+
+    setSavedRoutes(saved);
+    refreshSavedList();
+}
+
+function exportRoute(index) {
+    const saved = getSavedRoutes();
+    if (!saved || !saved[index]) return alert('Aucune route sélectionnée');
+    const data = JSON.stringify(saved[index], null, 2);
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${saved[index].name.replace(/[^a-z0-9\-]/gi,'_')}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+}
+
+function escapeXml(value) {
+    return String(value)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&apos;');
+}
+
+function routeToGpx(route) {
+    const routeName = escapeXml(route.name || 'Route');
+    const points = (route.points || [])
+        .map(pt => {
+            const lat = Number(pt.lat);
+            const lon = Number(pt.lon ?? pt.lng);
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) return '';
+            return `    <rtept lat="${lat}" lon="${lon}"></rtept>`;
+        })
+        .filter(Boolean)
+        .join('\n');
+
+    return `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="CEIBO Router" xmlns="http://www.topografix.com/GPX/1/1">\n  <metadata>\n    <name>${routeName}</name>\n  </metadata>\n  <rte>\n    <name>${routeName}</name>\n${points}\n  </rte>\n</gpx>`;
+}
+
+function exportRouteGpx(index) {
+    const saved = getSavedRoutes();
+    if (!saved || !saved[index]) return alert('Aucune route sélectionnée');
+
+    const gpx = routeToGpx(saved[index]);
+    const blob = new Blob([gpx], { type: 'application/gpx+xml' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${saved[index].name.replace(/[^a-z0-9\-]/gi,'_')}.gpx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+}
+
+function parseGpxToRoute(gpxText, fileName = 'Route importée') {
+    const parser = new DOMParser();
+    const xml = parser.parseFromString(gpxText, 'application/xml');
+    const parserError = xml.querySelector('parsererror');
+    if (parserError) throw new Error('GPX invalide');
+
+    const routeNameNode =
+        xml.querySelector('metadata > name') ||
+        xml.querySelector('rte > name') ||
+        xml.querySelector('trk > name');
+
+    const routeName = routeNameNode?.textContent?.trim() || fileName.replace(/\.gpx$/i, '');
+
+    const rtePts = Array.from(xml.getElementsByTagName('rtept'));
+    const trkPts = Array.from(xml.getElementsByTagName('trkpt'));
+    const wpts = Array.from(xml.getElementsByTagName('wpt'));
+    const pointNodes = rtePts.length ? rtePts : (trkPts.length ? trkPts : wpts);
+
+    const points = pointNodes
+        .map(node => ({
+            lat: Number(node.getAttribute('lat')),
+            lon: Number(node.getAttribute('lon'))
+        }))
+        .filter(pt => Number.isFinite(pt.lat) && Number.isFinite(pt.lon));
+
+    if (points.length === 0) throw new Error('Aucun point GPX trouvé');
+
+    return {
+        name: routeName,
+        date: departureDate,
+        time: departureTime,
+        tackingTimeHours,
+        points,
+        createdAt: new Date().toISOString()
+    };
+}
+
+function handleImport(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(evt) {
+        try {
+            const content = String(evt.target.result || '');
+            const saved = getSavedRoutes();
+
+            const isLikelyGpx = file.name.toLowerCase().endsWith('.gpx') || content.trim().startsWith('<');
+
+            if (isLikelyGpx) {
+                const route = parseGpxToRoute(content, file.name);
+                saved.push(route);
+            } else {
+                const obj = JSON.parse(content);
+                if (Array.isArray(obj)) {
+                    obj.forEach(o => saved.push(o));
+                } else {
+                    saved.push(obj);
+                }
+            }
+
+            setSavedRoutes(saved);
+            refreshSavedList();
+            alert('Import OK');
+        } catch (err) { alert('Fichier JSON/GPX invalide'); }
+    };
+    reader.readAsText(file);
+}
