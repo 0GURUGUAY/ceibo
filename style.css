@@ -126,6 +126,34 @@ body {
     margin-top: 8px;
 }
 
+.cloud-config-card {
+    margin-top: 10px;
+    padding: 8px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.cloud-config-title {
+    font-size: 12px;
+    font-weight: 700;
+    margin-bottom: 6px;
+}
+
+.cloud-input {
+    width: 100%;
+    padding: 8px;
+    margin-top: 6px;
+    box-sizing: border-box;
+}
+
+.cloud-status {
+    margin-top: 6px;
+    font-size: 11px;
+    opacity: 0.9;
+    line-height: 1.35;
+}
+
 button {
     width: 100%;
     padding: 8px 10px;

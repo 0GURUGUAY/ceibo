@@ -1,5 +1,6 @@
 import { routeSegment, distanceNm, getBearing, computeTWA, movePoint } from './polarRouter.js';
 import { feature as topojsonFeature } from 'https://cdn.jsdelivr.net/npm/topojson-client@3/+esm';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -62,6 +63,13 @@ const OVERPASS_MIN_INTERVAL_MS = 900;
 const OVERPASS_CACHE_TTL_MS = 8 * 60 * 1000;
 const OVERPASS_429_COOLDOWN_MS = 10 * 60 * 1000;
 const WAYPOINT_PHOTOS_STORAGE_KEY = 'ceiboWaypointPhotos';
+const SAVED_ROUTES_STORAGE_KEY = 'savedRoutes';
+const CLOUD_CONFIG_STORAGE_KEY = 'ceiboCloudConfigV1';
+const CLOUD_TABLE_NAME = 'ceibo_route_collections';
+let savedRoutesCache = [];
+let cloudClient = null;
+let cloudConfig = null;
+let cloudConnected = false;
 let overpassLastRequestAt = 0;
 const overpassQueryCache = new Map();
 const overpassEndpointCooldownUntil = new Map();
@@ -2601,7 +2609,7 @@ function createNauticalScaleControl() {
 // INIT MAP
 // =====================
 
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', async function() {
     map = L.map('map').setView([41.3851, 2.1734], 8);
 
     standardTileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -2836,7 +2844,7 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     // Saved routes UI
-    document.getElementById('saveRouteBtn').addEventListener('click', saveRoute);
+    document.getElementById('saveRouteBtn').addEventListener('click', () => { saveRoute(); });
     document.getElementById('loadRouteBtn').addEventListener('click', () => {
         const sel = document.getElementById('savedRoutesSelect');
         loadRoute(sel.selectedIndex);
@@ -2865,13 +2873,48 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     document.getElementById('importRouteInput').addEventListener('change', handleImport);
 
+    const cloudConnectBtn = document.getElementById('cloudConnectBtn');
+    if (cloudConnectBtn) {
+        cloudConnectBtn.addEventListener('click', async () => {
+            const config = readCloudConfigFromForm();
+            await connectCloud(config);
+        });
+    }
+
+    const cloudRefreshBtn = document.getElementById('cloudRefreshBtn');
+    if (cloudRefreshBtn) {
+        cloudRefreshBtn.addEventListener('click', async () => {
+            if (!isCloudReady()) {
+                setCloudStatus('Cloud non connecté (utilise "Connecter cloud")', true);
+                return;
+            }
+
+            try {
+                const routes = await pullRoutesFromCloud();
+                refreshSavedList();
+                setCloudStatus(`Cloud rafraîchi · ${routes.length} route(s)`);
+            } catch (_error) {
+                setCloudStatus('Rafraîchissement cloud impossible', true);
+            }
+        });
+    }
+
     loadWaypointPhotoEntries();
     resetWaypointPhotoFormValues();
     setWaypointPhotoEditMode(null);
     renderWaypointPhotoList();
     syncWaypointPhotoMarkersInView();
 
+    setSavedRoutes(loadRoutesFromLocalStorage());
     refreshSavedList();
+
+    const storedCloudConfig = loadCloudConfigFromStorage();
+    updateCloudFormFromConfig(storedCloudConfig);
+    if (storedCloudConfig) {
+        await connectCloud(storedCloudConfig, { silent: true });
+    } else {
+        setCloudStatus('Mode local (pas de cloud configuré)');
+    }
 });
 
 // =====================
@@ -4042,13 +4085,182 @@ function drawWind(lat, lon, direction) {
 // SAVE / LOAD ROUTES
 // =====================
 
+function sanitizeSavedRoute(route, fallbackIndex = 0) {
+    const nowIso = new Date().toISOString();
+    const name = String(route?.name || `Route ${fallbackIndex + 1}`).trim() || `Route ${fallbackIndex + 1}`;
+    const date = String(route?.date || departureDate || nowIso.slice(0, 10));
+    const time = normalizeHourTime(route?.time || departureTime || '12:00');
+    const tack = Number(route?.tackingTimeHours);
+    const tacking = Number.isFinite(tack) && tack > 0 ? tack : 0.5;
+    const points = Array.isArray(route?.points)
+        ? route.points
+            .map(pt => ({
+                lat: Number(pt?.lat),
+                lon: Number(pt?.lon ?? pt?.lng)
+            }))
+            .filter(pt => Number.isFinite(pt.lat) && Number.isFinite(pt.lon))
+        : [];
+
+    return {
+        name,
+        date,
+        time,
+        tackingTimeHours: tacking,
+        points,
+        createdAt: String(route?.createdAt || nowIso),
+        updatedAt: String(route?.updatedAt || route?.createdAt || nowIso)
+    };
+}
+
+function loadRoutesFromLocalStorage() {
+    try {
+        const raw = localStorage.getItem(SAVED_ROUTES_STORAGE_KEY);
+        const parsed = raw ? JSON.parse(raw) : [];
+        if (!Array.isArray(parsed)) return [];
+        return parsed.map((route, index) => sanitizeSavedRoute(route, index));
+    } catch (_error) {
+        return [];
+    }
+}
+
 function getSavedRoutes() {
-    const raw = localStorage.getItem('savedRoutes');
-    return raw ? JSON.parse(raw) : [];
+    return Array.isArray(savedRoutesCache) ? savedRoutesCache : [];
 }
 
 function setSavedRoutes(list) {
-    localStorage.setItem('savedRoutes', JSON.stringify(list));
+    const normalized = Array.isArray(list)
+        ? list.map((route, index) => sanitizeSavedRoute(route, index))
+        : [];
+    savedRoutesCache = normalized;
+    localStorage.setItem(SAVED_ROUTES_STORAGE_KEY, JSON.stringify(normalized));
+}
+
+function loadCloudConfigFromStorage() {
+    try {
+        const raw = localStorage.getItem(CLOUD_CONFIG_STORAGE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        const url = String(parsed?.url || '').trim();
+        const anonKey = String(parsed?.anonKey || '').trim();
+        const projectKey = String(parsed?.projectKey || '').trim();
+        if (!url || !anonKey || !projectKey) return null;
+        return { url, anonKey, projectKey };
+    } catch (_error) {
+        return null;
+    }
+}
+
+function saveCloudConfigToStorage(config) {
+    if (!config?.url || !config?.anonKey || !config?.projectKey) return;
+    localStorage.setItem(CLOUD_CONFIG_STORAGE_KEY, JSON.stringify(config));
+}
+
+function setCloudStatus(message, isError = false) {
+    const status = document.getElementById('cloudStatus');
+    if (!status) return;
+    status.textContent = message;
+    status.style.color = isError ? '#ff8f8f' : '';
+}
+
+function isCloudReady() {
+    return cloudConnected && !!cloudClient && !!cloudConfig?.projectKey;
+}
+
+async function pullRoutesFromCloud() {
+    if (!isCloudReady()) return getSavedRoutes();
+
+    const { data, error } = await cloudClient
+        .from(CLOUD_TABLE_NAME)
+        .select('routes')
+        .eq('project_key', cloudConfig.projectKey)
+        .maybeSingle();
+
+    if (error) throw error;
+
+    const cloudRoutes = Array.isArray(data?.routes)
+        ? data.routes.map((route, index) => sanitizeSavedRoute(route, index))
+        : [];
+
+    setSavedRoutes(cloudRoutes);
+    return cloudRoutes;
+}
+
+async function pushRoutesToCloud() {
+    if (!isCloudReady()) return false;
+    const routes = getSavedRoutes();
+
+    const { error } = await cloudClient
+        .from(CLOUD_TABLE_NAME)
+        .upsert({
+            project_key: cloudConfig.projectKey,
+            routes,
+            updated_at: new Date().toISOString()
+        }, {
+            onConflict: 'project_key'
+        });
+
+    if (error) throw error;
+    return true;
+}
+
+function updateCloudFormFromConfig(config) {
+    const urlInput = document.getElementById('cloudUrlInput');
+    const anonInput = document.getElementById('cloudAnonKeyInput');
+    const projectInput = document.getElementById('cloudProjectKeyInput');
+    if (urlInput && config?.url) urlInput.value = config.url;
+    if (anonInput && config?.anonKey) anonInput.value = config.anonKey;
+    if (projectInput && config?.projectKey) projectInput.value = config.projectKey;
+}
+
+function readCloudConfigFromForm() {
+    const url = String(document.getElementById('cloudUrlInput')?.value || '').trim();
+    const anonKey = String(document.getElementById('cloudAnonKeyInput')?.value || '').trim();
+    const projectKey = String(document.getElementById('cloudProjectKeyInput')?.value || '').trim();
+    return { url, anonKey, projectKey };
+}
+
+async function connectCloud(config, { silent = false } = {}) {
+    if (!config?.url || !config?.anonKey || !config?.projectKey) {
+        cloudClient = null;
+        cloudConfig = null;
+        cloudConnected = false;
+        if (!silent) setCloudStatus('Mode local (paramètres cloud incomplets)');
+        return false;
+    }
+
+    try {
+        const isSameConfig =
+            !!cloudClient &&
+            !!cloudConfig &&
+            cloudConfig.url === config.url &&
+            cloudConfig.anonKey === config.anonKey &&
+            cloudConfig.projectKey === config.projectKey;
+
+        if (!isSameConfig) {
+            cloudClient = createClient(config.url, config.anonKey, {
+                auth: {
+                    persistSession: false,
+                    autoRefreshToken: false,
+                    detectSessionInUrl: false,
+                    storageKey: `ceibo-supabase-${config.projectKey}`
+                }
+            });
+        }
+
+        cloudConfig = config;
+        const routes = await pullRoutesFromCloud();
+        saveCloudConfigToStorage(config);
+        cloudConnected = true;
+        refreshSavedList();
+        setCloudStatus(`Cloud connecté · ${routes.length} route(s) partagée(s)`);
+        return true;
+    } catch (_error) {
+        cloudClient = null;
+        cloudConfig = null;
+        cloudConnected = false;
+        setCloudStatus('Connexion cloud impossible (vérifie URL, clé anon et table Supabase)', true);
+        return false;
+    }
 }
 
 function refreshSavedList() {
@@ -4079,11 +4291,11 @@ function refreshSavedList() {
     }
 }
 
-function saveRoute() {
+async function saveRoute() {
     if (routePoints.length === 0) return alert('Aucun waypoint à sauvegarder');
     const nameInput = document.getElementById('routeNameInput');
     const rawName = (nameInput?.value || '').trim();
-    const saved = getSavedRoutes();
+    const saved = [...getSavedRoutes()];
     const canUpdateLoadedRoute = Number.isInteger(currentLoadedRouteIndex)
         && currentLoadedRouteIndex >= 0
         && currentLoadedRouteIndex < saved.length;
@@ -4114,6 +4326,16 @@ function saveRoute() {
     }
 
     setSavedRoutes(saved);
+
+    if (isCloudReady()) {
+        try {
+            await pushRoutesToCloud();
+            setCloudStatus(`Cloud synchronisé · ${saved.length} route(s)`);
+        } catch (_error) {
+            setCloudStatus('Sauvegarde locale OK, synchro cloud échouée', true);
+        }
+    }
+
     refreshSavedList();
 
     const sel = document.getElementById('savedRoutesSelect');
@@ -4202,7 +4424,7 @@ function loadRoute(index) {
 }
 
 function deleteRoute(index) {
-    const saved = getSavedRoutes();
+    const saved = [...getSavedRoutes()];
     if (!saved || !saved[index]) return;
     saved.splice(index, 1);
 
@@ -4213,7 +4435,17 @@ function deleteRoute(index) {
     }
 
     setSavedRoutes(saved);
-    refreshSavedList();
+
+    const finalize = () => refreshSavedList();
+    if (isCloudReady()) {
+        pushRoutesToCloud()
+            .then(() => setCloudStatus(`Cloud synchronisé · ${saved.length} route(s)`))
+            .catch(() => setCloudStatus('Suppression locale OK, synchro cloud échouée', true))
+            .finally(finalize);
+        return;
+    }
+
+    finalize();
 }
 
 function exportRoute(index) {
@@ -4312,10 +4544,10 @@ function handleImport(e) {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = function(evt) {
+    reader.onload = async function(evt) {
         try {
             const content = String(evt.target.result || '');
-            const saved = getSavedRoutes();
+            const saved = [...getSavedRoutes()];
 
             const isLikelyGpx = file.name.toLowerCase().endsWith('.gpx') || content.trim().startsWith('<');
 
@@ -4332,6 +4564,14 @@ function handleImport(e) {
             }
 
             setSavedRoutes(saved);
+            if (isCloudReady()) {
+                try {
+                    await pushRoutesToCloud();
+                    setCloudStatus(`Cloud synchronisé · ${saved.length} route(s)`);
+                } catch (_error) {
+                    setCloudStatus('Import local OK, synchro cloud échouée', true);
+                }
+            }
             refreshSavedList();
             alert('Import OK');
         } catch (err) { alert('Fichier JSON/GPX invalide'); }

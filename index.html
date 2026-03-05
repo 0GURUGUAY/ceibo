@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>CEIBO Router</title>
+    <title>CEIBO Router cloud</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/jpeg" href="ceibo-favicon.jpg">
@@ -17,7 +17,7 @@
 <body>
 
 <div id="sidebar">
-    <h2>CEIBO Router V3.0</h2>
+    <h2>CEIBO Router V5.0</h2>
 
     <div class="sidebar-tabs">
         <button id="routesTabBtn" class="tab-btn active" type="button">Routes</button>
@@ -95,6 +95,18 @@
     <div id="routesTab" class="tab-panel active">
         <label for="routeNameInput" style="display: block; margin-top: 10px; font-size: 12px;">Nom de la route:</label>
         <input type="text" id="routeNameInput" placeholder="Nom de la route" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
+
+        <div id="cloudConfigCard" class="cloud-config-card">
+            <div class="cloud-config-title">V5 · Base de données partagée</div>
+            <input type="text" id="cloudUrlInput" placeholder="Supabase URL (https://xxxx.supabase.co)" class="cloud-input">
+            <input type="text" id="cloudAnonKeyInput" placeholder="Supabase anon key" class="cloud-input">
+            <input type="text" id="cloudProjectKeyInput" placeholder="Espace partagé (ex: ceibo-main)" class="cloud-input" value="ceibo-main">
+            <div class="button-row">
+                <button id="cloudConnectBtn" style="flex:1;">Connecter cloud</button>
+                <button id="cloudRefreshBtn" style="flex:1;">Rafraîchir cloud</button>
+            </div>
+            <div id="cloudStatus" class="cloud-status">Mode local (pas de cloud configuré)</div>
+        </div>
 
         <div class="button-row">
             <button id="saveRouteBtn" style="flex:1;">Sauvegarder</button>
