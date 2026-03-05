@@ -2,7 +2,7 @@ import { routeSegment, distanceNm, getBearing, computeTWA, movePoint } from './p
 import { feature as topojsonFeature } from 'https://cdn.jsdelivr.net/npm/topojson-client@3/+esm';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const APP_BUILD_VERSION = '20260305-18';
+const APP_BUILD_VERSION = '20260305-19';
 
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -4200,6 +4200,15 @@ function renderMaintenanceExpenseDetailPanel() {
     editAmountInput.style.boxSizing = 'border-box';
     editSection.appendChild(editAmountInput);
 
+    const editAiCommentInput = document.createElement('textarea');
+    editAiCommentInput.rows = 4;
+    editAiCommentInput.value = String(selectedExpense.aiComment || '');
+    editAiCommentInput.placeholder = t('Commentaire facture', 'Comentario factura');
+    editAiCommentInput.style.width = '100%';
+    editAiCommentInput.style.marginTop = '6px';
+    editAiCommentInput.style.boxSizing = 'border-box';
+    editSection.appendChild(editAiCommentInput);
+
     const saveEditBtn = document.createElement('button');
     saveEditBtn.type = 'button';
     saveEditBtn.className = 'maintenance-delete-btn';
@@ -4211,7 +4220,8 @@ function renderMaintenanceExpenseDetailPanel() {
             paymentStatus: ['new', 'pending', 'planned', 'paid'].includes(editStatusSelect.value) ? editStatusSelect.value : 'pending',
             date: String(editDateInput.value || selectedExpense.date || '').trim(),
             supplierName: String(editSupplierInput.value || '').trim(),
-            totalAmount: nextAmount > 0 ? nextAmount : selectedExpense.totalAmount
+            totalAmount: nextAmount > 0 ? nextAmount : selectedExpense.totalAmount,
+            aiComment: String(editAiCommentInput.value || '').trim()
         }, { refreshUi: false });
         renderMaintenanceExpenses();
     });
