@@ -2893,8 +2893,8 @@ document.addEventListener('DOMContentLoaded', async function() {
                 const routes = await pullRoutesFromCloud();
                 refreshSavedList();
                 setCloudStatus(`Cloud rafraîchi · ${routes.length} route(s)`);
-            } catch (_error) {
-                setCloudStatus('Rafraîchissement cloud impossible', true);
+            } catch (error) {
+                setCloudStatus(`Rafraîchissement cloud impossible: ${formatCloudError(error)}`, true);
             }
         });
     }
@@ -4162,6 +4162,17 @@ function setCloudStatus(message, isError = false) {
     status.style.color = isError ? '#ff8f8f' : '';
 }
 
+function formatCloudError(error) {
+    if (!error) return 'erreur inconnue';
+    const parts = [];
+    if (error.code) parts.push(String(error.code));
+    if (error.status) parts.push(`HTTP ${error.status}`);
+    if (error.message) parts.push(String(error.message));
+    const detail = error.details || error.hint;
+    if (detail) parts.push(String(detail));
+    return parts.join(' · ') || String(error);
+}
+
 function isCloudReady() {
     return cloudConnected && !!cloudClient && !!cloudConfig?.projectKey;
 }
@@ -4254,11 +4265,11 @@ async function connectCloud(config, { silent = false } = {}) {
         refreshSavedList();
         setCloudStatus(`Cloud connecté · ${routes.length} route(s) partagée(s)`);
         return true;
-    } catch (_error) {
+    } catch (error) {
         cloudClient = null;
         cloudConfig = null;
         cloudConnected = false;
-        setCloudStatus('Connexion cloud impossible (vérifie URL, clé anon et table Supabase)', true);
+        setCloudStatus(`Connexion cloud impossible: ${formatCloudError(error)}`, true);
         return false;
     }
 }
@@ -4331,8 +4342,8 @@ async function saveRoute() {
         try {
             await pushRoutesToCloud();
             setCloudStatus(`Cloud synchronisé · ${saved.length} route(s)`);
-        } catch (_error) {
-            setCloudStatus('Sauvegarde locale OK, synchro cloud échouée', true);
+        } catch (error) {
+            setCloudStatus(`Sauvegarde locale OK, synchro cloud échouée: ${formatCloudError(error)}`, true);
         }
     }
 
@@ -4440,7 +4451,7 @@ function deleteRoute(index) {
     if (isCloudReady()) {
         pushRoutesToCloud()
             .then(() => setCloudStatus(`Cloud synchronisé · ${saved.length} route(s)`))
-            .catch(() => setCloudStatus('Suppression locale OK, synchro cloud échouée', true))
+            .catch(error => setCloudStatus(`Suppression locale OK, synchro cloud échouée: ${formatCloudError(error)}`, true))
             .finally(finalize);
         return;
     }
@@ -4568,8 +4579,8 @@ function handleImport(e) {
                 try {
                     await pushRoutesToCloud();
                     setCloudStatus(`Cloud synchronisé · ${saved.length} route(s)`);
-                } catch (_error) {
-                    setCloudStatus('Import local OK, synchro cloud échouée', true);
+                } catch (error) {
+                    setCloudStatus(`Import local OK, synchro cloud échouée: ${formatCloudError(error)}`, true);
                 }
             }
             refreshSavedList();
