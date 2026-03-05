@@ -209,10 +209,11 @@
 <body>
   <main class="wrap">
     <section class="hero">
-      <h1>Ayuda completa · CEIBO Router V3</h1>
+      <h1>Ayuda completa · CEIBO Router V5</h1>
       <p class="subtitle">Guía práctica en español para planificar rutas, analizar meteo, gestionar fondeos con fotos y exportar reportes.</p>
       <p class="subtitle"><strong>Programa creado por Max Patissier.</strong></p>
       <nav class="toc" aria-label="Índice rápido">
+        <a href="#cloud">Cloud</a>
         <a href="#routes">Routes</a>
         <a href="#routage">Routage</a>
         <a href="#arrivee">Arrivée</a>
@@ -221,7 +222,7 @@
         <a href="#problemas">Problemas</a>
       </nav>
       <div class="kpi">
-        <div class="pill"><strong>4</strong>Pestañas principales</div>
+        <div class="pill"><strong>5</strong>Pestañas principales</div>
         <div class="pill"><strong>Meteo</strong>Viento, presión, ola, ETA</div>
         <div class="pill"><strong>Fotos</strong>Fondeos geolocalizados</div>
         <div class="pill"><strong>GPX/PDF</strong>Importar y exportar</div>
@@ -229,8 +230,21 @@
     </section>
 
     <section class="grid">
+      <article class="card half" id="cloud">
+        <h2>1) Pestaña CLOUD (primera al iniciar)</h2>
+        <span class="tag">Conectar</span>
+        <span class="tag">Sincronización auto</span>
+        <span class="tag">Mac + iPad</span>
+        <ul>
+          <li>Introduce solo el <strong>mot de passe cloud</strong> y pulsa <strong>Connecter cloud</strong>.</li>
+          <li>La app sincroniza <strong>rutas + fotos waypoint</strong> automáticamente.</li>
+          <li>Sincronización al volver a la app, al enfocar ventana y periódicamente.</li>
+          <li><strong>Rafraîchir cloud</strong> queda como refresco manual de respaldo.</li>
+        </ul>
+      </article>
+
       <article class="card half" id="routes">
-        <h2>1) Pestaña ROUTES</h2>
+        <h2>2) Pestaña ROUTES</h2>
         <span class="tag">Guardar</span>
         <span class="tag">Cargar</span>
         <span class="tag">Importar JSON/GPX</span>
@@ -245,7 +259,7 @@
       </article>
 
       <article class="card half" id="routage">
-        <h2>2) Pestaña ROUTAGE</h2>
+        <h2>3) Pestaña ROUTAGE</h2>
         <span class="tag">Calcular</span>
         <span class="tag">Sugerir salida</span>
         <span class="tag">Evitar costa</span>
@@ -260,7 +274,7 @@
       </article>
 
       <article class="card half" id="arrivee">
-        <h2>3) Pestaña ARRIVÉE</h2>
+        <h2>4) Pestaña ARRIVÉE</h2>
         <span class="tag">Mouillage</span>
         <span class="tag">POI</span>
         <span class="tag">Recomendación</span>
@@ -272,12 +286,13 @@
       </article>
 
       <article class="card half" id="waypoint">
-        <h2>4) Pestaña WAYPOINT (fotos)</h2>
+        <h2>5) Pestaña WAYPOINT (fotos)</h2>
         <span class="tag">EXIF GPS</span>
         <span class="tag">Mapa editable</span>
         <span class="tag">Valoración</span>
         <span class="tag">Y aller</span>
         <ul>
+          <li><strong>📷 Prendre photo (WP auto):</strong> en móvil, toma foto y se crea un WP automáticamente (si hay GPS EXIF).</li>
           <li>Sube foto de fondeo y lee coordenadas GPS si existen.</li>
           <li>Si no hay GPS, define posición manual en mini mapa.</li>
           <li>Rellena nombre del lugar, comentario, nota, profundidad y protección.</li>

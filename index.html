@@ -17,12 +17,12 @@
 <body>
 
 <div id="sidebar">
-    <h2>CEIBO Router V5.0</h2>
+    <h2>CEIBO Router Cloud version</h2>
 
     <div class="sidebar-tabs">
-        <button id="routesTabBtn" class="tab-btn active" type="button">Routes</button>
+        <button id="cloudTabBtn" class="tab-btn active" type="button">Cloud</button>
+        <button id="routesTabBtn" class="tab-btn" type="button">Routes</button>
         <button id="routingTabBtn" class="tab-btn" type="button">Routage</button>
-        <button id="cloudTabBtn" class="tab-btn" type="button">Cloud</button>
         <button id="arrivalTabBtn" class="tab-btn" type="button">Arrivée</button>
         <button id="waypointTabBtn" class="tab-btn" type="button">Waypoint</button>
     </div>
@@ -93,7 +93,7 @@
         <div id="windSpeedLegend"></div>
     </div>
 
-    <div id="routesTab" class="tab-panel active">
+    <div id="routesTab" class="tab-panel">
         <label for="routeNameInput" style="display: block; margin-top: 10px; font-size: 12px;">Nom de la route:</label>
         <input type="text" id="routeNameInput" placeholder="Nom de la route" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
 
@@ -123,7 +123,7 @@
         <input type="file" id="importRouteInput" accept=".json,.gpx,application/json,application/gpx+xml,text/xml,application/xml" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
     </div>
 
-    <div id="cloudTab" class="tab-panel">
+    <div id="cloudTab" class="tab-panel active">
         <div id="cloudConfigCard" class="cloud-config-card" style="margin-top:0;">
             <div class="cloud-config-title">V5 · Base de données partagée</div>
             <input type="hidden" id="cloudUrlInput" value="https://wtavqhpntfnsklbniqzf.supabase.co">
@@ -136,7 +136,7 @@
                 <button id="cloudRefreshBtn" style="flex:1;">Rafraîchir cloud</button>
             </div>
             <div id="cloudStatus" class="cloud-status">Mode local (pas de cloud configuré)</div>
-            <div class="cloud-status">Note: les photos waypoint restent locales pour le moment.</div>
+            <div class="cloud-status">Routes + photos waypoint: synchronisation cloud automatique.</div>
         </div>
     </div>
 
@@ -156,6 +156,10 @@
     <div id="waypointTab" class="tab-panel">
         <label for="waypointPhotoInput" style="display: block; margin-top: 10px; font-size: 12px;">Photo mouillage:</label>
         <input type="file" id="waypointPhotoInput" accept="image/*" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
+        <div class="button-row">
+            <button id="waypointQuickCaptureBtn" type="button" style="flex:1; margin-top:8px;">📷 Prendre photo (WP auto)</button>
+        </div>
+        <input type="file" id="waypointQuickCaptureInput" accept="image/*" capture="environment" style="display:none;">
         <div id="waypointPhotoStatus" style="margin-top:6px; font-size:12px; opacity:0.9;">Coordonnées: en attente d'une photo</div>
         <img id="waypointPhotoPreview" alt="Prévisualisation" class="waypoint-photo-preview" style="display:none;">
         <div id="waypointEditorMap" class="waypoint-editor-map" style="display:none;"></div>

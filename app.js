@@ -1033,6 +1033,74 @@ async function handleWaypointPhotoInputChange(event) {
     }
 }
 
+async function handleQuickWaypointCaptureChange(event) {
+    const file = event?.target?.files?.[0];
+    if (!file) return;
+
+    const status = document.getElementById('waypointPhotoStatus');
+
+    try {
+        if (!file.type.startsWith('image/')) {
+            if (status) status.textContent = 'Ce fichier n\'est pas une image.';
+            return;
+        }
+
+        if (status) status.textContent = 'Photo rapide: lecture GPS...';
+
+        const coords = await extractGpsCoordinatesFromPhoto(file);
+        if (!coords) {
+            if (status) status.textContent = 'Photo rapide: GPS EXIF introuvable (WP auto non créé).';
+            alert('La photo ne contient pas de coordonnées GPS. Utilise le mode manuel pour positionner le waypoint.');
+            return;
+        }
+
+        const imageDataUrl = await imageFileToCompressedDataUrl(file);
+        const nowIso = new Date().toISOString();
+        const entry = normalizeWaypointPhotoEntry({
+            id: `wp-photo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            lat: coords.lat,
+            lng: coords.lng,
+            placeName: '',
+            imageDataUrl,
+            comment: '',
+            rating: 3,
+            cleanliness: 3,
+            protection: [],
+            depthMeters: 10,
+            bottomType: '',
+            createdAt: nowIso,
+            updatedAt: nowIso
+        });
+
+        if (!entry) {
+            if (status) status.textContent = 'Photo rapide: coordonnées invalides.';
+            return;
+        }
+
+        waypointPhotoEntries.unshift(entry);
+        const persisted = persistWaypointPhotoEntries();
+        if (!persisted) {
+            waypointPhotoEntries.shift();
+            alert('Stockage saturé: impossible d\'enregistrer cette photo.');
+            return;
+        }
+
+        renderWaypointPhotoList();
+        syncWaypointPhotoMarkersInView();
+        if (map) {
+            map.setView([entry.lat, entry.lng], Math.max(map.getZoom(), 11));
+        }
+
+        if (status) {
+            status.textContent = `Photo rapide: WP créé automatiquement (${entry.lat.toFixed(5)}, ${entry.lng.toFixed(5)}).`;
+        }
+    } catch (_error) {
+        if (status) status.textContent = 'Photo rapide: échec de création du WP.';
+    } finally {
+        if (event?.target) event.target.value = '';
+    }
+}
+
 async function saveWaypointPhotoEntry() {
     if (waypointPhotoInputProcessing) {
         alert('Photo en cours de traitement, attends 1-2 secondes puis réessaie.');
@@ -2814,6 +2882,13 @@ document.addEventListener('DOMContentLoaded', async function() {
     const waypointPhotoInput = document.getElementById('waypointPhotoInput');
     if (waypointPhotoInput) {
         waypointPhotoInput.addEventListener('change', handleWaypointPhotoInputChange);
+    }
+
+    const waypointQuickCaptureBtn = document.getElementById('waypointQuickCaptureBtn');
+    const waypointQuickCaptureInput = document.getElementById('waypointQuickCaptureInput');
+    if (waypointQuickCaptureBtn && waypointQuickCaptureInput) {
+        waypointQuickCaptureBtn.addEventListener('click', () => waypointQuickCaptureInput.click());
+        waypointQuickCaptureInput.addEventListener('change', handleQuickWaypointCaptureChange);
     }
 
     const saveWaypointPhotoBtn = document.getElementById('saveWaypointPhotoBtn');
