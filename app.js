@@ -66,10 +66,13 @@ const WAYPOINT_PHOTOS_STORAGE_KEY = 'ceiboWaypointPhotos';
 const SAVED_ROUTES_STORAGE_KEY = 'savedRoutes';
 const CLOUD_CONFIG_STORAGE_KEY = 'ceiboCloudConfigV1';
 const CLOUD_TABLE_NAME = 'ceibo_route_collections';
+const CLOUD_AUTO_PULL_INTERVAL_MS = 45000;
 let savedRoutesCache = [];
 let cloudClient = null;
 let cloudConfig = null;
 let cloudConnected = false;
+let cloudAutoPullTimer = null;
+let cloudAutoPullInFlight = false;
 let overpassLastRequestAt = 0;
 const overpassQueryCache = new Map();
 const overpassEndpointCooldownUntil = new Map();
@@ -550,8 +553,32 @@ function loadWaypointPhotoEntries() {
         .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 }
 
+function setWaypointPhotoEntries(list, { persistLocal = true, refreshUi = true } = {}) {
+    waypointPhotoEntries = (Array.isArray(list) ? list : [])
+        .map(normalizeWaypointPhotoEntry)
+        .filter(Boolean)
+        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+
+    if (persistLocal) {
+        setWaypointPhotoStorageList(waypointPhotoEntries);
+    }
+
+    if (refreshUi) {
+        renderWaypointPhotoList();
+        syncWaypointPhotoMarkersInView();
+    }
+}
+
 function persistWaypointPhotoEntries() {
-    return setWaypointPhotoStorageList(waypointPhotoEntries);
+    const ok = setWaypointPhotoStorageList(waypointPhotoEntries);
+
+    if (ok && isCloudReady()) {
+        pushRoutesToCloud()
+            .then(() => setCloudStatus(`Cloud synchronisé · ${getSavedRoutes().length} route(s) + ${waypointPhotoEntries.length} photo(s)`))
+            .catch(error => setCloudStatus(`Photos locales OK, synchro cloud échouée: ${formatCloudError(error)}`, true));
+    }
+
+    return ok;
 }
 
 function resetWaypointPhotoFormValues() {
@@ -2673,32 +2700,38 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     const routingTabBtn = document.getElementById('routingTabBtn');
     const routesTabBtn = document.getElementById('routesTabBtn');
+    const cloudTabBtn = document.getElementById('cloudTabBtn');
     const arrivalTabBtn = document.getElementById('arrivalTabBtn');
     const waypointTabBtn = document.getElementById('waypointTabBtn');
     const routingTab = document.getElementById('routingTab');
     const routesTab = document.getElementById('routesTab');
+    const cloudTab = document.getElementById('cloudTab');
     const arrivalTab = document.getElementById('arrivalTab');
     const waypointTab = document.getElementById('waypointTab');
 
     function activateTab(tabName) {
         const isRouting = tabName === 'routing';
         const isRoutes = tabName === 'routes';
+        const isCloud = tabName === 'cloud';
         const isArrival = tabName === 'arrival';
         const isWaypoint = tabName === 'waypoint';
 
         routingTabBtn.classList.toggle('active', isRouting);
         routesTabBtn.classList.toggle('active', isRoutes);
+        cloudTabBtn.classList.toggle('active', isCloud);
         arrivalTabBtn.classList.toggle('active', isArrival);
         waypointTabBtn.classList.toggle('active', isWaypoint);
 
         routingTab.classList.toggle('active', isRouting);
         routesTab.classList.toggle('active', isRoutes);
+        cloudTab.classList.toggle('active', isCloud);
         arrivalTab.classList.toggle('active', isArrival);
         waypointTab.classList.toggle('active', isWaypoint);
     }
 
     routingTabBtn.addEventListener('click', () => activateTab('routing'));
     routesTabBtn.addEventListener('click', () => activateTab('routes'));
+    cloudTabBtn.addEventListener('click', () => activateTab('cloud'));
     arrivalTabBtn.addEventListener('click', () => activateTab('arrival'));
     waypointTabBtn.addEventListener('click', () => activateTab('waypoint'));
 
@@ -2876,6 +2909,24 @@ document.addEventListener('DOMContentLoaded', async function() {
     const cloudConnectBtn = document.getElementById('cloudConnectBtn');
     if (cloudConnectBtn) {
         cloudConnectBtn.addEventListener('click', async () => {
+            if (!isCloudPasswordValid()) {
+                setCloudStatus('Mot de passe cloud invalide', true);
+                return;
+            }
+            const config = readCloudConfigFromForm();
+            await connectCloud(config);
+        });
+    }
+
+    const cloudPasswordInput = document.getElementById('cloudPasswordInput');
+    if (cloudPasswordInput) {
+        cloudPasswordInput.addEventListener('keydown', async (e) => {
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            if (!isCloudPasswordValid()) {
+                setCloudStatus('Mot de passe cloud invalide', true);
+                return;
+            }
             const config = readCloudConfigFromForm();
             await connectCloud(config);
         });
@@ -2890,14 +2941,22 @@ document.addEventListener('DOMContentLoaded', async function() {
             }
 
             try {
-                const routes = await pullRoutesFromCloud();
-                refreshSavedList();
-                setCloudStatus(`Cloud rafraîchi · ${routes.length} route(s)`);
+                await autoPullRoutesFromCloud('manual');
             } catch (error) {
                 setCloudStatus(`Rafraîchissement cloud impossible: ${formatCloudError(error)}`, true);
             }
         });
     }
+
+    window.addEventListener('focus', () => {
+        autoPullRoutesFromCloud('silent');
+    });
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+            autoPullRoutesFromCloud('silent');
+        }
+    });
 
     loadWaypointPhotoEntries();
     resetWaypointPhotoFormValues();
@@ -2911,9 +2970,18 @@ document.addEventListener('DOMContentLoaded', async function() {
     const storedCloudConfig = loadCloudConfigFromStorage();
     updateCloudFormFromConfig(storedCloudConfig);
     if (storedCloudConfig) {
-        await connectCloud(storedCloudConfig, { silent: true });
+        if (isCloudPasswordValid()) {
+            await connectCloud(storedCloudConfig, { silent: true });
+        } else {
+            setCloudStatus('Entre le mot de passe cloud puis clique "Connecter cloud"');
+        }
     } else {
-        setCloudStatus('Mode local (pas de cloud configuré)');
+        const hiddenConfig = readCloudConfigFromForm();
+        if (hiddenConfig?.url && hiddenConfig?.anonKey && hiddenConfig?.projectKey) {
+            setCloudStatus('Entre le mot de passe cloud puis clique "Connecter cloud"');
+        } else {
+            setCloudStatus('Mode local (pas de cloud configuré)');
+        }
     }
 });
 
@@ -4177,6 +4245,39 @@ function isCloudReady() {
     return cloudConnected && !!cloudClient && !!cloudConfig?.projectKey;
 }
 
+async function autoPullRoutesFromCloud(trigger = 'auto') {
+    if (!isCloudReady() || cloudAutoPullInFlight) return false;
+    cloudAutoPullInFlight = true;
+
+    try {
+        const routes = await pullRoutesFromCloud();
+        refreshSavedList();
+        if (trigger !== 'silent') {
+            setCloudStatus(`Cloud synchro auto · ${routes.length} route(s)`);
+        }
+        return true;
+    } catch (error) {
+        setCloudStatus(`Synchro auto cloud impossible: ${formatCloudError(error)}`, true);
+        return false;
+    } finally {
+        cloudAutoPullInFlight = false;
+    }
+}
+
+function stopCloudAutoSync() {
+    if (!cloudAutoPullTimer) return;
+    clearInterval(cloudAutoPullTimer);
+    cloudAutoPullTimer = null;
+}
+
+function startCloudAutoSync() {
+    stopCloudAutoSync();
+    if (!isCloudReady()) return;
+    cloudAutoPullTimer = setInterval(() => {
+        autoPullRoutesFromCloud('silent');
+    }, CLOUD_AUTO_PULL_INTERVAL_MS);
+}
+
 async function pullRoutesFromCloud() {
     if (!isCloudReady()) return getSavedRoutes();
 
@@ -4188,23 +4289,40 @@ async function pullRoutesFromCloud() {
 
     if (error) throw error;
 
-    const cloudRoutes = Array.isArray(data?.routes)
-        ? data.routes.map((route, index) => sanitizeSavedRoute(route, index))
-        : [];
+    const rawPayload = data?.routes;
+    let rawRoutes = [];
+    let rawWaypointPhotos = null;
 
+    if (Array.isArray(rawPayload)) {
+        rawRoutes = rawPayload;
+    } else if (rawPayload && typeof rawPayload === 'object') {
+        rawRoutes = Array.isArray(rawPayload.routes) ? rawPayload.routes : [];
+        rawWaypointPhotos = Array.isArray(rawPayload.waypointPhotos) ? rawPayload.waypointPhotos : [];
+    }
+
+    const cloudRoutes = rawRoutes.map((route, index) => sanitizeSavedRoute(route, index));
     setSavedRoutes(cloudRoutes);
+
+    if (Array.isArray(rawWaypointPhotos)) {
+        setWaypointPhotoEntries(rawWaypointPhotos, { persistLocal: true, refreshUi: true });
+    }
+
     return cloudRoutes;
 }
 
 async function pushRoutesToCloud() {
     if (!isCloudReady()) return false;
-    const routes = getSavedRoutes();
+    const payload = {
+        version: 2,
+        routes: getSavedRoutes(),
+        waypointPhotos: waypointPhotoEntries
+    };
 
     const { error } = await cloudClient
         .from(CLOUD_TABLE_NAME)
         .upsert({
             project_key: cloudConfig.projectKey,
-            routes,
+            routes: payload,
             updated_at: new Date().toISOString()
         }, {
             onConflict: 'project_key'
@@ -4230,8 +4348,23 @@ function readCloudConfigFromForm() {
     return { url, anonKey, projectKey };
 }
 
+function getCloudPasswordPreset() {
+    return String(document.getElementById('cloudPasswordPreset')?.value || '').trim();
+}
+
+function getCloudEnteredPassword() {
+    return String(document.getElementById('cloudPasswordInput')?.value || '').trim();
+}
+
+function isCloudPasswordValid() {
+    const preset = getCloudPasswordPreset();
+    if (!preset) return true;
+    return getCloudEnteredPassword() === preset;
+}
+
 async function connectCloud(config, { silent = false } = {}) {
     if (!config?.url || !config?.anonKey || !config?.projectKey) {
+        stopCloudAutoSync();
         cloudClient = null;
         cloudConfig = null;
         cloudConnected = false;
@@ -4262,10 +4395,12 @@ async function connectCloud(config, { silent = false } = {}) {
         const routes = await pullRoutesFromCloud();
         saveCloudConfigToStorage(config);
         cloudConnected = true;
+        startCloudAutoSync();
         refreshSavedList();
         setCloudStatus(`Cloud connecté · ${routes.length} route(s) partagée(s)`);
         return true;
     } catch (error) {
+        stopCloudAutoSync();
         cloudClient = null;
         cloudConfig = null;
         cloudConnected = false;

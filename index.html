@@ -22,6 +22,7 @@
     <div class="sidebar-tabs">
         <button id="routesTabBtn" class="tab-btn active" type="button">Routes</button>
         <button id="routingTabBtn" class="tab-btn" type="button">Routage</button>
+        <button id="cloudTabBtn" class="tab-btn" type="button">Cloud</button>
         <button id="arrivalTabBtn" class="tab-btn" type="button">Arrivée</button>
         <button id="waypointTabBtn" class="tab-btn" type="button">Waypoint</button>
     </div>
@@ -96,18 +97,6 @@
         <label for="routeNameInput" style="display: block; margin-top: 10px; font-size: 12px;">Nom de la route:</label>
         <input type="text" id="routeNameInput" placeholder="Nom de la route" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
 
-        <div id="cloudConfigCard" class="cloud-config-card">
-            <div class="cloud-config-title">V5 · Base de données partagée</div>
-            <input type="text" id="cloudUrlInput" placeholder="Supabase URL (https://xxxx.supabase.co)" class="cloud-input">
-            <input type="text" id="cloudAnonKeyInput" placeholder="Supabase anon key" class="cloud-input">
-            <input type="text" id="cloudProjectKeyInput" placeholder="Espace partagé (ex: ceibo-main)" class="cloud-input" value="ceibo-main">
-            <div class="button-row">
-                <button id="cloudConnectBtn" style="flex:1;">Connecter cloud</button>
-                <button id="cloudRefreshBtn" style="flex:1;">Rafraîchir cloud</button>
-            </div>
-            <div id="cloudStatus" class="cloud-status">Mode local (pas de cloud configuré)</div>
-        </div>
-
         <div class="button-row">
             <button id="saveRouteBtn" style="flex:1;">Sauvegarder</button>
             <button id="exportRouteBtn" style="flex:1;">Exporter</button>
@@ -132,6 +121,23 @@
 
         <label for="importRouteInput" style="display: block; margin-top: 12px; font-size: 12px;">Importer (JSON / GPX):</label>
         <input type="file" id="importRouteInput" accept=".json,.gpx,application/json,application/gpx+xml,text/xml,application/xml" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
+    </div>
+
+    <div id="cloudTab" class="tab-panel">
+        <div id="cloudConfigCard" class="cloud-config-card" style="margin-top:0;">
+            <div class="cloud-config-title">V5 · Base de données partagée</div>
+            <input type="hidden" id="cloudUrlInput" value="https://wtavqhpntfnsklbniqzf.supabase.co">
+            <input type="hidden" id="cloudAnonKeyInput" value="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind0YXZxaHBudGZuc2tsYm5pcXpmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI2NjkwNzMsImV4cCI6MjA4ODI0NTA3M30.v4T63RWtSjCHBGM5y4nFKdONpteviLSer-P_8vWAY68">
+            <input type="hidden" id="cloudProjectKeyInput" value="ceibo-main">
+            <input type="hidden" id="cloudPasswordPreset" value="Ceibo1">
+            <input type="password" id="cloudPasswordInput" placeholder="Mot de passe cloud" class="cloud-input">
+            <div class="button-row">
+                <button id="cloudConnectBtn" style="flex:1;">Connecter cloud</button>
+                <button id="cloudRefreshBtn" style="flex:1;">Rafraîchir cloud</button>
+            </div>
+            <div id="cloudStatus" class="cloud-status">Mode local (pas de cloud configuré)</div>
+            <div class="cloud-status">Note: les photos waypoint restent locales pour le moment.</div>
+        </div>
     </div>
 
     <div id="arrivalTab" class="tab-panel">
