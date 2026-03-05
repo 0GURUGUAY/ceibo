@@ -125,6 +125,7 @@ const MAINTENANCE_SUPPLIERS_STORAGE_KEY = 'ceiboMaintenanceSuppliersV1';
 const MAINTENANCE_LLM_PROVIDER_STORAGE_KEY = 'ceiboMaintenanceLlmProviderV1';
 const MAINTENANCE_LLM_MODEL_STORAGE_KEY = 'ceiboMaintenanceLlmModelV1';
 const MAINTENANCE_LLM_API_KEY_STORAGE_KEY = 'ceiboMaintenanceLlmApiKeyV1';
+const ANTHROPIC_PROXY_FUNCTION_NAME = 'anthropic-proxy';
 const MAINTENANCE_COLOR_ORDER = ['red', 'orange', 'green', 'blue'];
 const MAINTENANCE_TASK_STATUS_ORDER = ['active', 'planned', 'done'];
 const MAINTENANCE_COLORS = {
@@ -439,6 +440,7 @@ function applyLanguageToUi() {
     setElementText('#maintenanceAltLlmTitle', t('Analyse IA alternative', 'Análisis IA alternativo'));
     setElementText('label[for="maintenanceLlmProviderSelect"]', t('Provider:', 'Proveedor:'));
     setElementText('#maintenanceLlmProviderSelect option[value=""]', t('Désactivé', 'Desactivado'));
+    setElementText('#maintenanceLlmProviderSelect option[value="anthropic"]', t('Anthropic (proxy requis)', 'Anthropic (proxy requerido)'));
     setElementText('label[for="maintenanceLlmApiKeyInput"]', t('API key:', 'Clave API:'));
     setElementText('label[for="maintenanceLlmModelInput"]', t('Model:', 'Modelo:'));
     setElementPlaceholder('#maintenanceLlmModelInput', t('gpt-4o-mini / claude-3-5-haiku-latest', 'gpt-4o-mini / claude-3-5-haiku-latest'));
@@ -4463,7 +4465,8 @@ async function requestAlternativeLlmAnalysis({ provider = '', apiKey = '', model
     const safeProvider = String(provider || '').trim().toLowerCase();
     const safeApiKey = sanitizeApiKey(apiKey);
     const safeModel = String(model || '').trim();
-    if (!safeProvider || !safeApiKey || !safeModel || !prompt) {
+    const requiresApiKey = safeProvider === 'openai';
+    if (!safeProvider || !safeModel || !prompt || (requiresApiKey && !safeApiKey)) {
         throw new Error(t('Paramètres IA incomplets.', 'Parámetros IA incompletos.'));
     }
 
@@ -4491,6 +4494,35 @@ async function requestAlternativeLlmAnalysis({ provider = '', apiKey = '', model
     }
 
     if (safeProvider === 'anthropic') {
+        const proxyConfig = getAnthropicProxyConfig();
+        if (proxyConfig?.endpointUrl) {
+            const response = await fetch(proxyConfig.endpointUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'apikey': proxyConfig.anonKey,
+                    'Authorization': `Bearer ${proxyConfig.anonKey}`
+                },
+                body: JSON.stringify({
+                    model: safeModel,
+                    prompt,
+                    maxTokens: 1400,
+                    temperature: 0.2
+                })
+            });
+            if (!response.ok) {
+                throw await buildAlternativeLlmHttpError('Anthropic proxy', response);
+            }
+            const data = await response.json();
+            return String(data?.text || '').trim();
+        }
+
+        if (isAnthropicDirectCallBlockedByBrowser()) {
+            throw new Error(t(
+                'Anthropic direct depuis navigateur bloqué (CORS). Configure un proxy Supabase Edge Function (anthropic-proxy).',
+                'Anthropic directo desde navegador bloqueado (CORS). Configura un proxy Supabase Edge Function (anthropic-proxy).'
+            ));
+        }
         const response = await fetch('https://api.anthropic.com/v1/messages', {
             method: 'POST',
             headers: {
@@ -4522,7 +4554,8 @@ async function testAlternativeLlmConnection({ provider = '', apiKey = '', model 
     const safeProvider = String(provider || '').trim().toLowerCase();
     const safeApiKey = sanitizeApiKey(apiKey);
     const safeModel = String(model || '').trim();
-    if (!safeProvider || !safeApiKey || !safeModel) {
+    const requiresApiKey = safeProvider === 'openai';
+    if (!safeProvider || !safeModel || (requiresApiKey && !safeApiKey)) {
         throw new Error(t('Paramètres IA incomplets.', 'Parámetros IA incompletos.'));
     }
 
@@ -4547,6 +4580,35 @@ async function testAlternativeLlmConnection({ provider = '', apiKey = '', model 
     }
 
     if (safeProvider === 'anthropic') {
+        const proxyConfig = getAnthropicProxyConfig();
+        if (proxyConfig?.endpointUrl) {
+            const response = await fetch(proxyConfig.endpointUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'apikey': proxyConfig.anonKey,
+                    'Authorization': `Bearer ${proxyConfig.anonKey}`
+                },
+                body: JSON.stringify({
+                    model: safeModel,
+                    prompt: 'Ping',
+                    maxTokens: 8,
+                    temperature: 0,
+                    testOnly: true
+                })
+            });
+            if (!response.ok) {
+                throw await buildAlternativeLlmHttpError('Anthropic proxy', response);
+            }
+            return true;
+        }
+
+        if (isAnthropicDirectCallBlockedByBrowser()) {
+            throw new Error(t(
+                'Anthropic direct depuis navigateur bloqué (CORS). Configure un proxy Supabase Edge Function (anthropic-proxy).',
+                'Anthropic directo desde navegador bloqueado (CORS). Configura un proxy Supabase Edge Function (anthropic-proxy).'
+            ));
+        }
         const response = await fetch('https://api.anthropic.com/v1/messages', {
             method: 'POST',
             headers: {
@@ -4598,6 +4660,30 @@ function sanitizeApiKey(rawValue) {
         .replace(/\s+/g, '')
         .replace(/[^\x20-\x7E]/g, '')
         .trim();
+}
+
+function isAnthropicDirectCallBlockedByBrowser() {
+    try {
+        const host = String(window?.location?.hostname || '').toLowerCase();
+        const protocol = String(window?.location?.protocol || '').toLowerCase();
+        if (!host) return false;
+        if (host.endsWith('github.io')) return true;
+        if (protocol === 'file:') return true;
+        return false;
+    } catch (_) {
+        return false;
+    }
+}
+
+function getAnthropicProxyConfig() {
+    const cloudUrl = String(document.getElementById('cloudUrlInput')?.value || '').trim();
+    const anonKey = String(document.getElementById('cloudAnonKeyInput')?.value || '').trim();
+    if (!cloudUrl || !anonKey) return null;
+    const baseUrl = cloudUrl.replace(/\/+$/, '');
+    return {
+        endpointUrl: `${baseUrl}/functions/v1/${ANTHROPIC_PROXY_FUNCTION_NAME}`,
+        anonKey
+    };
 }
 
 async function buildAlternativeLlmHttpError(providerLabel, response) {
@@ -5561,7 +5647,7 @@ function initializeMaintenanceFeature() {
         const provider = String(llmProviderSelect.value || '').trim();
         const apiKey = sanitizeApiKey(llmApiKeyInput.value);
         const model = String(llmModelInput.value || '').trim();
-        if (!provider || !apiKey || !model) {
+            if (!provider || !model || (provider === 'openai' && !apiKey)) {
             invoiceScanStatus.textContent = t('Configure provider, API key et model.', 'Configura proveedor, clave API y modelo.');
             return;
         }
@@ -5623,7 +5709,7 @@ function initializeMaintenanceFeature() {
         const provider = String(llmProviderSelect.value || '').trim();
         const apiKey = sanitizeApiKey(llmApiKeyInput.value);
         const model = String(llmModelInput.value || '').trim();
-        if (!provider || !apiKey || !model) {
+            if (!provider || !model || (provider === 'openai' && !apiKey)) {
             invoiceScanStatus.textContent = t('Configure provider, API key et model.', 'Configura proveedor, clave API y modelo.');
             return;
         }

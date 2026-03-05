@@ -103,6 +103,42 @@ on conflict (email) do nothing;
 
 Si la table `allowed_users` n'existe pas, l'app laisse passer l'authentification (mode sans whitelist).
 
+### 6) Proxy Anthropic (obligatoire sur GitHub Pages à cause du CORS)
+
+Pour utiliser Claude depuis l'app web hébergée (`github.io`), il faut passer par une Edge Function Supabase.
+
+1. Installer Supabase CLI et se connecter:
+
+```bash
+supabase login
+```
+
+2. Lier le projet:
+
+```bash
+supabase link --project-ref wtavqhpntfnsklbniqzf
+```
+
+3. Définir la clé Anthropic côté serveur (secret):
+
+```bash
+supabase secrets set ANTHROPIC_API_KEY=ta_cle_anthropic
+```
+
+4. Déployer la fonction proxy incluse dans ce repo:
+
+```bash
+supabase functions deploy anthropic-proxy --no-verify-jwt
+```
+
+5. Dans l'app (onglet Maintenance > Dépenses):
+- Provider: `Anthropic (proxy requis)`
+- Model: ex. `claude-3-5-haiku-latest`
+- API key côté UI: peut rester vide en mode proxy
+- Tester connexion API
+
+La fonction appelée est: `https://<SUPABASE_URL>/functions/v1/anthropic-proxy`
+
 ## Roadmap 05/03/2026
 
 ### Livré dans cette itération
