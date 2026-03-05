@@ -325,7 +325,7 @@ function applyLanguageToUi() {
     setElementText('#cloudAuthStatus', t('Utilisateur: non connecté', 'Usuario: no conectado'));
     setElementText('#cloudStatus', t('Mode local (pas de cloud configuré)', 'Modo local (nube no configurada)'));
     setElementText('#cloudDataSourceStatus', t('Données routes/photos: en attente', 'Datos rutas/fotos: en espera'));
-    setElementText('#cloudAutoSyncInfo', t('Routes + photos waypoint: synchronisation cloud automatique.', 'Rutas + fotos waypoint: sincronización nube automática.'));
+    setElementText('#cloudAutoSyncInfo', t('Routes + photos waypoint + maintenance: synchronisation cloud automatique.', 'Rutas + fotos waypoint + mantenimiento: sincronización nube automática.'));
 
     setElementText('#startNavLogBtn', t('Démarrer log GPS', 'Iniciar log GPS'));
     setElementText('#stopNavLogBtn', t('Arrêter log GPS', 'Detener log GPS'));
@@ -506,6 +506,7 @@ function clearProtectedUiData() {
     savedRoutesCache = [];
     refreshSavedList();
     setWaypointPhotoEntries([], { persistLocal: false, refreshUi: true });
+    setMaintenanceBoards([], { persistLocal: false, refreshUi: true, syncCloud: false });
     navLogEntries = [];
     renderNavLogList();
     engineLogEntries = [];
@@ -538,6 +539,7 @@ async function applyAuthGateState({ clearWhenLocked = true } = {}) {
             savedRoutesCache = [];
             refreshSavedList();
             setWaypointPhotoEntries([], { persistLocal: false, refreshUi: true });
+            setMaintenanceBoards([], { persistLocal: false, refreshUi: true, syncCloud: false });
             navLogEntries = [];
             renderNavLogList();
             engineLogEntries = [];
@@ -547,6 +549,8 @@ async function applyAuthGateState({ clearWhenLocked = true } = {}) {
             loadWaypointPhotoEntries();
             renderWaypointPhotoList();
             syncWaypointPhotoMarkersInView();
+            loadMaintenanceBoards();
+            renderMaintenanceBoard();
             loadNavigationLogbook();
             loadEngineLogbook();
             setSavedRoutes(loadRoutesFromLocalStorage());
@@ -571,6 +575,8 @@ async function applyAuthGateState({ clearWhenLocked = true } = {}) {
                 loadWaypointPhotoEntries();
                 renderWaypointPhotoList();
                 syncWaypointPhotoMarkersInView();
+                loadMaintenanceBoards();
+                renderMaintenanceBoard();
                 setCloudStatus(`Cloud indisponible, affichage cache local (${localRoutes.length} route(s))`, true);
                 updateCloudDataSourceStatus('cache local (fallback)', localRoutes.length, waypointPhotoEntries.length);
             } else {
@@ -3664,22 +3670,46 @@ function sanitizeMaintenanceBoard(board, fallbackIndex = 0) {
 }
 
 function loadMaintenanceBoards() {
-    maintenanceBoards = loadArrayFromStorage(MAINTENANCE_BOARDS_STORAGE_KEY)
+    const fromStorage = loadArrayFromStorage(MAINTENANCE_BOARDS_STORAGE_KEY);
+    setMaintenanceBoards(fromStorage, { persistLocal: false, refreshUi: false, syncCloud: false });
+}
+
+function setMaintenanceBoards(list, { persistLocal = true, refreshUi = true, syncCloud = false } = {}) {
+    maintenanceBoards = (Array.isArray(list) ? list : [])
         .map((board, index) => sanitizeMaintenanceBoard(board, index));
 
     if (!maintenanceBoards.length) {
         selectedMaintenanceBoardId = null;
-        return;
+    } else {
+        const selectedStillExists = maintenanceBoards.some(board => board.id === selectedMaintenanceBoardId);
+        if (!selectedStillExists) {
+            selectedMaintenanceBoardId = maintenanceBoards[0].id;
+        }
     }
 
-    const selectedStillExists = maintenanceBoards.some(board => board.id === selectedMaintenanceBoardId);
-    if (!selectedStillExists) {
-        selectedMaintenanceBoardId = maintenanceBoards[0].id;
+    if (persistLocal) {
+        saveArrayToStorage(MAINTENANCE_BOARDS_STORAGE_KEY, maintenanceBoards);
+    }
+
+    if (syncCloud && isCloudReady()) {
+        pushRoutesToCloud()
+            .then(() => setCloudStatus(`Cloud synchronisé · ${getSavedRoutes().length} route(s) + ${waypointPhotoEntries.length} photo(s) + ${maintenanceBoards.length} schéma(s)`))
+            .catch(error => setCloudStatus(`Maintenance locale OK, synchro cloud échouée: ${formatCloudError(error)}`, true));
+    }
+
+    if (refreshUi) {
+        renderMaintenanceBoard();
     }
 }
 
-function persistMaintenanceBoards() {
+function persistMaintenanceBoards({ syncCloud = true } = {}) {
     saveArrayToStorage(MAINTENANCE_BOARDS_STORAGE_KEY, maintenanceBoards);
+
+    if (syncCloud && isCloudReady()) {
+        pushRoutesToCloud()
+            .then(() => setCloudStatus(`Cloud synchronisé · ${getSavedRoutes().length} route(s) + ${waypointPhotoEntries.length} photo(s) + ${maintenanceBoards.length} schéma(s)`))
+            .catch(error => setCloudStatus(`Maintenance locale OK, synchro cloud échouée: ${formatCloudError(error)}`, true));
+    }
 }
 
 function getSelectedMaintenanceBoard() {
@@ -6752,7 +6782,7 @@ function updateCloudDataSourceStatus(sourceLabel, routeCount = null, photoCount 
     const safeSourceLocalized = sourceLabelMap[safeSource] || safeSource;
     const routesLabel = Number.isFinite(routeCount) ? routeCount : getSavedRoutes().length;
     const photosLabel = Number.isFinite(photoCount) ? photoCount : waypointPhotoEntries.length;
-    status.textContent = `${t('Données routes/photos', 'Datos rutas/fotos')}: ${safeSourceLocalized} · ${t('routes', 'rutas')}: ${routesLabel} · ${t('photos', 'fotos')}: ${photosLabel}`;
+    status.textContent = `${t('Données routes/photos/maintenance', 'Datos rutas/fotos/mantenimiento')}: ${safeSourceLocalized} · ${t('routes', 'rutas')}: ${routesLabel} · ${t('photos', 'fotos')}: ${photosLabel} · ${t('schémas', 'esquemas')}: ${maintenanceBoards.length}`;
 }
 
 function formatCloudError(error) {
@@ -6828,6 +6858,7 @@ async function pullRoutesFromCloud() {
 
     let rawRoutes = [];
     let rawWaypointPhotos = null;
+    let rawMaintenanceBoards = null;
     let rawNavLogEntries = null;
     let rawEngineLogEntries = null;
 
@@ -6836,6 +6867,7 @@ async function pullRoutesFromCloud() {
     } else if (rawPayload && typeof rawPayload === 'object') {
         rawRoutes = Array.isArray(rawPayload.routes) ? rawPayload.routes : [];
         rawWaypointPhotos = Array.isArray(rawPayload.waypointPhotos) ? rawPayload.waypointPhotos : [];
+        rawMaintenanceBoards = Array.isArray(rawPayload.maintenanceBoards) ? rawPayload.maintenanceBoards : null;
         rawNavLogEntries = Array.isArray(rawPayload.navLogEntries) ? rawPayload.navLogEntries : [];
         rawEngineLogEntries = Array.isArray(rawPayload.engineLogEntries) ? rawPayload.engineLogEntries : [];
     }
@@ -6845,6 +6877,10 @@ async function pullRoutesFromCloud() {
 
     if (Array.isArray(rawWaypointPhotos)) {
         setWaypointPhotoEntries(rawWaypointPhotos, { persistLocal: true, refreshUi: true });
+    }
+
+    if (Array.isArray(rawMaintenanceBoards)) {
+        setMaintenanceBoards(rawMaintenanceBoards, { persistLocal: true, refreshUi: true, syncCloud: false });
     }
 
     if (Array.isArray(rawNavLogEntries)) {
@@ -6867,9 +6903,10 @@ async function pullRoutesFromCloud() {
 async function pushRoutesToCloud() {
     if (!isCloudReady()) return false;
     const payload = {
-        version: 3,
+        version: 4,
         routes: getSavedRoutes(),
         waypointPhotos: waypointPhotoEntries,
+        maintenanceBoards,
         navLogEntries,
         engineLogEntries
     };
