@@ -2,7 +2,7 @@ import { routeSegment, distanceNm, getBearing, computeTWA, movePoint } from './p
 import { feature as topojsonFeature } from 'https://cdn.jsdelivr.net/npm/topojson-client@3/+esm';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const APP_BUILD_VERSION = '20260305-19';
+const APP_BUILD_VERSION = '20260305-20';
 
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -614,6 +614,7 @@ function clearProtectedUiData() {
 
 async function applyAuthGateState({ clearWhenLocked = true } = {}) {
     const locked = isAuthGateLocked();
+    const isInitialProtectedLoad = !protectedDataLoaded;
     setProtectedTabsEnabled(!locked);
 
     if (locked) {
@@ -666,7 +667,8 @@ async function applyAuthGateState({ clearWhenLocked = true } = {}) {
 
     if (isCloudReady()) {
         try {
-            const routes = await pullRoutesFromCloud({ allowMaintenanceOverwrite: false });
+            const shouldHydrateMaintenanceFromCloud = isAuthRequiredRuntime() && isInitialProtectedLoad;
+            const routes = await pullRoutesFromCloud({ allowMaintenanceOverwrite: shouldHydrateMaintenanceFromCloud });
             refreshSavedList();
             setCloudStatus(t(`Cloud connecté · ${routes.length} route(s) partagée(s)`, `Nube conectada · ${routes.length} ruta(s) compartida(s)`));
             updateCloudDataSourceStatus('cloud', routes.length, waypointPhotoEntries.length);
