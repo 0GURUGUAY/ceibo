@@ -248,16 +248,22 @@
         <div class="button-row">
             <button id="refreshWeatherOutlookBtn" style="flex:1;">Actualiser météo</button>
         </div>
-        <label for="owmApiKeyInput" style="display:block; margin-top:10px; font-size:12px;">Clé API OpenWeatherMap (isobares):</label>
-        <input type="password" id="owmApiKeyInput" placeholder="Ta clé OWM" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
-        <div class="button-row">
-            <button id="testOwmApiKeyBtn" style="flex:1;">Tester clé OWM</button>
+        <div id="weatherApiConfigSection">
+            <label for="owmApiKeyInput" style="display:block; margin-top:10px; font-size:12px;">Clé API OpenWeatherMap (isobares):</label>
+            <input type="password" id="owmApiKeyInput" placeholder="Ta clé OWM" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
+            <div class="button-row">
+                <button id="testOwmApiKeyBtn" style="flex:1;">Tester clé OWM</button>
+            </div>
+            <div class="button-row">
+                <button id="saveOwmApiKeyBtn" style="flex:1;">Enregistrer clé OWM</button>
+                <button id="clearOwmApiKeyBtn" style="flex:1;">Supprimer clé OWM</button>
+            </div>
+            <div id="owmApiKeyStatus" style="margin-top:6px; font-size:12px; opacity:0.9;">Clé OWM: non testée</div>
         </div>
+        <div id="weatherApiConfigSummary" style="margin-top:6px; font-size:12px; opacity:0.9; display:none;">API météo connectée.</div>
         <div class="button-row">
-            <button id="saveOwmApiKeyBtn" style="flex:1;">Enregistrer clé OWM</button>
-            <button id="clearOwmApiKeyBtn" style="flex:1;">Supprimer clé OWM</button>
+            <button id="toggleWeatherApiConfigBtn" style="flex:1; display:none;">Afficher API météo</button>
         </div>
-        <div id="owmApiKeyStatus" style="margin-top:6px; font-size:12px; opacity:0.9;">Clé OWM: non testée</div>
         <div id="weatherOutlookStatus" style="margin-top:6px; font-size:12px; opacity:0.9;">Météo: en attente</div>
         <div id="weatherOutlookList"></div>
     </div>

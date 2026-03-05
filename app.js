@@ -338,23 +338,38 @@ function createIsobarOverlayLayer(appId) {
         return L.layerGroup();
     }
 
-    const contours = L.tileLayer(`https://tile.openweathermap.org/map/pressure_cntr/{z}/{x}/{y}.png?appid=${encodeURIComponent(appId)}`, {
-        attribution: 'Isobares © OpenWeatherMap',
-        opacity: 0.95,
+    const contoursLegacy = L.tileLayer(`https://tile.openweathermap.org/map/pressure_cntr/{z}/{x}/{y}.png?appid=${encodeURIComponent(appId)}`, {
+        attribution: 'Isobares legacy © OpenWeatherMap',
+        opacity: 0.92,
         maxNativeZoom: 18,
         errorTileUrl: TRANSPARENT_TILE_DATA_URI,
         crossOrigin: true
     });
 
-    const background = L.tileLayer(`https://tile.openweathermap.org/map/pressure_new/{z}/{x}/{y}.png?appid=${encodeURIComponent(appId)}`, {
-        attribution: 'Pression © OpenWeatherMap',
-        opacity: 0.25,
-        maxNativeZoom: 18,
-        errorTileUrl: TRANSPARENT_TILE_DATA_URI,
-        crossOrigin: true
+    const isobarGroup = L.layerGroup([contoursLegacy]);
+
+    let contourTileErrorCount = 0;
+    let contourDisabled = false;
+
+    contoursLegacy.on('tileerror', () => {
+        contourTileErrorCount += 1;
+
+        if (contourDisabled) return;
+        if (contourTileErrorCount < 6) return;
+
+        contourDisabled = true;
+        if (isobarGroup.hasLayer(contoursLegacy)) {
+            isobarGroup.removeLayer(contoursLegacy);
+        }
+
+        setCloudStatus('Isobares lignes indisponibles (OWM timeout).', true);
     });
 
-    return L.layerGroup([background, contours]);
+    contoursLegacy.on('tileload', () => {
+        contourTileErrorCount = 0;
+    });
+
+    return isobarGroup;
 }
 
 async function testOpenWeatherApiKey(appId) {
@@ -4041,7 +4056,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         {
             'Maritime · Profondeurs': marineDepthLayer,
             'Maritime · Dangers': marineHazardLayer,
-            'Météo · Isobares (pression · clé OWM)': isobarLayer
+            'Météo · Isobares (lignes · clé OWM)': isobarLayer
         },
         { position: 'topright', collapsed: false }
     ).addTo(map);
@@ -4344,8 +4359,50 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     const owmApiKeyInput = document.getElementById('owmApiKeyInput');
     const owmApiKeyStatus = document.getElementById('owmApiKeyStatus');
+    const weatherApiConfigSection = document.getElementById('weatherApiConfigSection');
+    const weatherApiConfigSummary = document.getElementById('weatherApiConfigSummary');
+    const toggleWeatherApiConfigBtn = document.getElementById('toggleWeatherApiConfigBtn');
+
+    function setWeatherApiConfigVisibility(showConfig, summaryText = 'API météo connectée.') {
+        if (weatherApiConfigSection) weatherApiConfigSection.style.display = showConfig ? '' : 'none';
+        if (weatherApiConfigSummary) {
+            weatherApiConfigSummary.textContent = summaryText;
+            weatherApiConfigSummary.style.display = showConfig ? 'none' : '';
+        }
+        if (toggleWeatherApiConfigBtn) {
+            toggleWeatherApiConfigBtn.style.display = showConfig ? '' : '';
+            toggleWeatherApiConfigBtn.textContent = showConfig ? 'Masquer API météo' : 'Afficher API météo';
+        }
+    }
+
+    if (toggleWeatherApiConfigBtn) {
+        toggleWeatherApiConfigBtn.addEventListener('click', () => {
+            const isShown = weatherApiConfigSection?.style.display !== 'none';
+            setWeatherApiConfigVisibility(!isShown);
+        });
+    }
+
     if (owmApiKeyInput) {
         owmApiKeyInput.value = getStoredOpenWeatherTileAppId();
+    }
+
+    setWeatherApiConfigVisibility(true);
+
+    const storedOwmKey = getStoredOpenWeatherTileAppId();
+    if (storedOwmKey) {
+        if (owmApiKeyStatus) owmApiKeyStatus.textContent = 'Clé OWM: validation en cours...';
+        testOpenWeatherApiKey(storedOwmKey).then(result => {
+            if (owmApiKeyStatus) {
+                owmApiKeyStatus.textContent = result.ok
+                    ? `Clé OWM: ✅ ${result.message}`
+                    : `Clé OWM: ❌ ${result.message}`;
+            }
+            if (result.ok) {
+                setWeatherApiConfigVisibility(false, 'API météo connectée (isobares actives).');
+            }
+        }).catch(() => {
+            if (owmApiKeyStatus) owmApiKeyStatus.textContent = 'Clé OWM: test impossible.';
+        });
     }
 
     const testOwmApiKeyBtn = document.getElementById('testOwmApiKeyBtn');
@@ -4359,6 +4416,12 @@ document.addEventListener('DOMContentLoaded', async function() {
                 owmApiKeyStatus.textContent = result.ok
                     ? `Clé OWM: ✅ ${result.message}`
                     : `Clé OWM: ❌ ${result.message}`;
+            }
+
+            if (result.ok) {
+                setWeatherApiConfigVisibility(false, 'API météo connectée (isobares actives).');
+            } else {
+                setWeatherApiConfigVisibility(true);
             }
         });
     }
@@ -4383,6 +4446,7 @@ document.addEventListener('DOMContentLoaded', async function() {
             localStorage.removeItem(OWM_TILE_APPID_STORAGE_KEY);
             if (owmApiKeyInput) owmApiKeyInput.value = '';
             if (owmApiKeyStatus) owmApiKeyStatus.textContent = 'Clé OWM: supprimée.';
+            setWeatherApiConfigVisibility(true);
             alert('Clé OWM supprimée. Recharge la page.');
         });
     }
@@ -4406,6 +4470,7 @@ document.addEventListener('DOMContentLoaded', async function() {
                 const { error } = await cloudClient.auth.signInWithPassword({ email, password });
                 if (error) throw error;
                 setCloudAuthStatus(`Connexion email OK (${email})`);
+                activateTab('routes');
             } catch (error) {
                 setCloudAuthStatus(`Connexion email impossible: ${formatCloudError(error)}`, true);
             }
@@ -4440,6 +4505,7 @@ document.addEventListener('DOMContentLoaded', async function() {
                     setCloudAuthStatus(`Compte créé (${email}). Vérifie l'email de confirmation.`);
                 } else {
                     setCloudAuthStatus(`Compte créé et connecté (${email}).`);
+                    activateTab('routes');
                 }
             } catch (error) {
                 setCloudAuthStatus(`Création compte impossible: ${formatCloudError(error)}`, true);
@@ -4600,6 +4666,10 @@ document.addEventListener('DOMContentLoaded', async function() {
         } else {
             setCloudStatus('Mode local (pas de cloud configuré)');
         }
+    }
+
+    if (cloudAuthUser) {
+        activateTab('routes');
     }
 
     await applyAuthGateState({ clearWhenLocked: true });
