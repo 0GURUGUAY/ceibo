@@ -97,6 +97,7 @@ let aiTrafficAutoHideTimer = null;
 let weatherFocusMarker = null;
 let weatherFocusPoint = null;
 let weatherPointerPlacementMode = false;
+let protectedDataLoaded = false;
 let overpassLastRequestAt = 0;
 const overpassQueryCache = new Map();
 const overpassEndpointCooldownUntil = new Map();
@@ -161,6 +162,105 @@ function setDepartureFromDateTimeInput(rawValue) {
 
 function normalizeMapStyle(value) {
     return value === 'satellite' ? 'satellite' : 'standard';
+}
+
+function isAuthRequiredRuntime() {
+    try {
+        const locationObj = window?.location;
+        const protocol = String(locationObj?.protocol || '').toLowerCase();
+        const hostname = String(locationObj?.hostname || '').toLowerCase();
+
+        if (protocol === 'file:') return false;
+        if (!hostname) return false;
+        if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') return false;
+        return true;
+    } catch (_error) {
+        return false;
+    }
+}
+
+function isAuthGateLocked() {
+    return isAuthRequiredRuntime() && !cloudAuthUser;
+}
+
+function setProtectedTabsEnabled(enabled) {
+    const protectedTabIds = [
+        'routesTabBtn',
+        'routingTabBtn',
+        'navLogTabBtn',
+        'engineTabBtn',
+        'weatherTabBtn',
+        'arrivalTabBtn',
+        'waypointTabBtn'
+    ];
+
+    protectedTabIds.forEach(id => {
+        const button = document.getElementById(id);
+        if (button) button.disabled = !enabled;
+    });
+}
+
+function clearProtectedUiData() {
+    setSavedRoutes([]);
+    refreshSavedList();
+    setWaypointPhotoEntries([], { persistLocal: false, refreshUi: true });
+    navLogEntries = [];
+    renderNavLogList();
+    engineLogEntries = [];
+    renderEngineLogList();
+    clearCurrentRoute();
+}
+
+async function applyAuthGateState({ clearWhenLocked = true } = {}) {
+    const locked = isAuthGateLocked();
+    setProtectedTabsEnabled(!locked);
+
+    if (locked) {
+        if (activeTabName !== 'cloud') {
+            const cloudBtn = document.getElementById('cloudTabBtn');
+            if (cloudBtn) cloudBtn.click();
+        }
+
+        if (clearWhenLocked) {
+            clearProtectedUiData();
+            protectedDataLoaded = false;
+        }
+
+        setCloudStatus('Accès verrouillé: authentifie-toi (email/mot de passe).', true);
+        return;
+    }
+
+    if (!protectedDataLoaded) {
+        if (isAuthRequiredRuntime()) {
+            setSavedRoutes([]);
+            refreshSavedList();
+            setWaypointPhotoEntries([], { persistLocal: false, refreshUi: true });
+            navLogEntries = [];
+            renderNavLogList();
+            engineLogEntries = [];
+            renderEngineLogList();
+        } else {
+            loadWaypointPhotoEntries();
+            renderWaypointPhotoList();
+            syncWaypointPhotoMarkersInView();
+            loadNavigationLogbook();
+            loadEngineLogbook();
+            setSavedRoutes(loadRoutesFromLocalStorage());
+            refreshSavedList();
+        }
+
+        protectedDataLoaded = true;
+    }
+
+    if (isCloudReady()) {
+        try {
+            const routes = await pullRoutesFromCloud();
+            refreshSavedList();
+            setCloudStatus(`Cloud connecté · ${routes.length} route(s) partagée(s)`);
+        } catch (error) {
+            setCloudStatus(`Récupération cloud impossible: ${formatCloudError(error)}`, true);
+        }
+    }
 }
 
 function escapeHtml(value) {
@@ -3245,6 +3345,7 @@ async function refreshCloudAuthSession() {
     if (!cloudClient) {
         cloudAuthUser = null;
         updateCloudAuthUi();
+        await applyAuthGateState({ clearWhenLocked: true });
         return;
     }
 
@@ -3254,9 +3355,11 @@ async function refreshCloudAuthSession() {
         cloudAuthUser = data?.session?.user || null;
         updateCloudAuthUi();
         await enforceCloudWhitelistForCurrentUser();
+        await applyAuthGateState({ clearWhenLocked: true });
     } catch (_error) {
         cloudAuthUser = null;
         updateCloudAuthUi();
+        await applyAuthGateState({ clearWhenLocked: true });
     }
 }
 
@@ -3926,6 +4029,11 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     // Setup event listeners after map is ready
     map.on('click', function(e) {
+        if (isAuthGateLocked()) {
+            setCloudStatus('Accès verrouillé: authentifie-toi (email/mot de passe).', true);
+            return;
+        }
+
         if (weatherPointerPlacementMode && activeTabName === 'weather') {
             setWeatherFocusPoint(e.latlng, { refresh: true, sourceLabel: 'pointeur carte' });
             setWeatherPointerPlacementMode(false);
@@ -3981,6 +4089,11 @@ document.addEventListener('DOMContentLoaded', async function() {
     const waypointTab = document.getElementById('waypointTab');
 
     function activateTab(tabName) {
+        if (isAuthGateLocked() && tabName !== 'cloud') {
+            setCloudStatus('Accès verrouillé: authentifie-toi (email/mot de passe).', true);
+            tabName = 'cloud';
+        }
+
         activeTabName = tabName;
         const isRouting = tabName === 'routing';
         const isRoutes = tabName === 'routes';
@@ -4441,17 +4554,10 @@ document.addEventListener('DOMContentLoaded', async function() {
         }
     });
 
-    loadWaypointPhotoEntries();
     resetWaypointPhotoFormValues();
     setWaypointPhotoEditMode(null);
-    renderWaypointPhotoList();
-    syncWaypointPhotoMarkersInView();
-    loadNavigationLogbook();
-    loadEngineLogbook();
     updateCloudAuthUi();
-
-    setSavedRoutes(loadRoutesFromLocalStorage());
-    refreshSavedList();
+    await applyAuthGateState({ clearWhenLocked: true });
 
     const storedCloudConfig = loadCloudConfigFromStorage();
     updateCloudFormFromConfig(storedCloudConfig);
@@ -4465,6 +4571,8 @@ document.addEventListener('DOMContentLoaded', async function() {
             setCloudStatus('Mode local (pas de cloud configuré)');
         }
     }
+
+    await applyAuthGateState({ clearWhenLocked: true });
 
     refreshWeatherOutlook();
 });
@@ -5768,7 +5876,9 @@ function formatCloudError(error) {
 }
 
 function isCloudReady() {
-    return cloudConnected && !!cloudClient && !!cloudConfig?.projectKey;
+    if (!cloudConnected || !cloudClient || !cloudConfig?.projectKey) return false;
+    if (isAuthRequiredRuntime() && !cloudAuthUser) return false;
+    return true;
 }
 
 async function autoPullRoutesFromCloud(trigger = 'auto') {
@@ -5932,18 +6042,27 @@ async function connectCloud(config, { silent = false } = {}) {
             cloudAuthSubscription = cloudClient.auth.onAuthStateChange((_event, session) => {
                 cloudAuthUser = session?.user || null;
                 updateCloudAuthUi();
-                void enforceCloudWhitelistForCurrentUser();
+                void (async () => {
+                    await enforceCloudWhitelistForCurrentUser();
+                    await applyAuthGateState({ clearWhenLocked: true });
+                })();
             });
         }
 
         cloudConfig = config;
-        const routes = await pullRoutesFromCloud();
         saveCloudConfigToStorage(config);
         cloudConnected = true;
         await refreshCloudAuthSession();
         startCloudAutoSync();
-        refreshSavedList();
-        setCloudStatus(`Cloud connecté · ${routes.length} route(s) partagée(s)`);
+
+        if (isCloudReady()) {
+            const routes = await pullRoutesFromCloud();
+            refreshSavedList();
+            setCloudStatus(`Cloud connecté · ${routes.length} route(s) partagée(s)`);
+        } else {
+            setCloudStatus('Cloud connecté · authentification requise.');
+        }
+
         return true;
     } catch (error) {
         stopCloudAutoSync();
