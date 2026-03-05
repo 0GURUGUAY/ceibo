@@ -212,6 +212,7 @@ function clearProtectedUiData() {
     engineLogEntries = [];
     renderEngineLogList();
     clearCurrentRoute();
+    updateCloudDataSourceStatus('verrouillé (auth requise)', 0, waypointPhotoEntries.length);
 }
 
 async function applyAuthGateState({ clearWhenLocked = true } = {}) {
@@ -242,6 +243,7 @@ async function applyAuthGateState({ clearWhenLocked = true } = {}) {
             renderNavLogList();
             engineLogEntries = [];
             renderEngineLogList();
+            updateCloudDataSourceStatus('attente authentification', 0, 0);
         } else {
             loadWaypointPhotoEntries();
             renderWaypointPhotoList();
@@ -250,6 +252,7 @@ async function applyAuthGateState({ clearWhenLocked = true } = {}) {
             loadEngineLogbook();
             setSavedRoutes(loadRoutesFromLocalStorage());
             refreshSavedList();
+            updateCloudDataSourceStatus('cache local', getSavedRoutes().length, waypointPhotoEntries.length);
         }
 
         protectedDataLoaded = true;
@@ -260,6 +263,7 @@ async function applyAuthGateState({ clearWhenLocked = true } = {}) {
             const routes = await pullRoutesFromCloud();
             refreshSavedList();
             setCloudStatus(`Cloud connecté · ${routes.length} route(s) partagée(s)`);
+            updateCloudDataSourceStatus('cloud', routes.length, waypointPhotoEntries.length);
         } catch (error) {
             const localRoutes = loadRoutesFromLocalStorage();
             if (localRoutes.length > 0) {
@@ -269,8 +273,10 @@ async function applyAuthGateState({ clearWhenLocked = true } = {}) {
                 renderWaypointPhotoList();
                 syncWaypointPhotoMarkersInView();
                 setCloudStatus(`Cloud indisponible, affichage cache local (${localRoutes.length} route(s))`, true);
+                updateCloudDataSourceStatus('cache local (fallback)', localRoutes.length, waypointPhotoEntries.length);
             } else {
                 setCloudStatus(`Récupération cloud impossible: ${formatCloudError(error)}`, true);
+                updateCloudDataSourceStatus('indisponible', 0, waypointPhotoEntries.length);
             }
         }
     }
@@ -332,13 +338,23 @@ function createIsobarOverlayLayer(appId) {
         return L.layerGroup();
     }
 
-    return L.tileLayer(`https://tile.openweathermap.org/map/pressure_new/{z}/{x}/{y}.png?appid=${encodeURIComponent(appId)}`, {
+    const contours = L.tileLayer(`https://tile.openweathermap.org/map/pressure_cntr/{z}/{x}/{y}.png?appid=${encodeURIComponent(appId)}`, {
         attribution: 'Isobares © OpenWeatherMap',
-        opacity: 0.65,
+        opacity: 0.95,
         maxNativeZoom: 18,
         errorTileUrl: TRANSPARENT_TILE_DATA_URI,
         crossOrigin: true
     });
+
+    const background = L.tileLayer(`https://tile.openweathermap.org/map/pressure_new/{z}/{x}/{y}.png?appid=${encodeURIComponent(appId)}`, {
+        attribution: 'Pression © OpenWeatherMap',
+        opacity: 0.25,
+        maxNativeZoom: 18,
+        errorTileUrl: TRANSPARENT_TILE_DATA_URI,
+        crossOrigin: true
+    });
+
+    return L.layerGroup([background, contours]);
 }
 
 async function testOpenWeatherApiKey(appId) {
@@ -4570,6 +4586,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     resetWaypointPhotoFormValues();
     setWaypointPhotoEditMode(null);
     updateCloudAuthUi();
+    updateCloudDataSourceStatus('initialisation', 0, 0);
     await applyAuthGateState({ clearWhenLocked: true });
 
     const storedCloudConfig = loadCloudConfigFromStorage();
@@ -5877,6 +5894,16 @@ function setCloudStatus(message, isError = false) {
     status.style.color = isError ? '#ff8f8f' : '';
 }
 
+function updateCloudDataSourceStatus(sourceLabel, routeCount = null, photoCount = null) {
+    const status = document.getElementById('cloudDataSourceStatus');
+    if (!status) return;
+
+    const safeSource = String(sourceLabel || 'inconnu');
+    const routesLabel = Number.isFinite(routeCount) ? routeCount : getSavedRoutes().length;
+    const photosLabel = Number.isFinite(photoCount) ? photoCount : waypointPhotoEntries.length;
+    status.textContent = `Données routes/photos: ${safeSource} · routes: ${routesLabel} · photos: ${photosLabel}`;
+}
+
 function formatCloudError(error) {
     if (!error) return 'erreur inconnue';
     const parts = [];
@@ -5944,6 +5971,7 @@ async function pullRoutesFromCloud() {
     const hasCloudPayload = rawPayload !== undefined && rawPayload !== null;
 
     if (!hasCloudPayload) {
+        updateCloudDataSourceStatus('cache local (cloud vide)', localRoutesBeforePull.length, waypointPhotoEntries.length);
         return localRoutesBeforePull;
     }
 
@@ -5979,6 +6007,8 @@ async function pullRoutesFromCloud() {
         saveArrayToStorage(ENGINE_LOG_STORAGE_KEY, engineLogEntries);
         renderEngineLogList();
     }
+
+    updateCloudDataSourceStatus('cloud', cloudRoutes.length, waypointPhotoEntries.length);
 
     return cloudRoutes;
 }
@@ -6165,13 +6195,16 @@ async function saveRoute() {
     }
 
     setSavedRoutes(saved);
+    updateCloudDataSourceStatus('local (non synchronisé)', saved.length, waypointPhotoEntries.length);
 
     if (isCloudReady()) {
         try {
             await pushRoutesToCloud();
             setCloudStatus(`Cloud synchronisé · ${saved.length} route(s)`);
+            updateCloudDataSourceStatus('cloud', saved.length, waypointPhotoEntries.length);
         } catch (error) {
             setCloudStatus(`Sauvegarde locale OK, synchro cloud échouée: ${formatCloudError(error)}`, true);
+            updateCloudDataSourceStatus('cache local (synchro en échec)', saved.length, waypointPhotoEntries.length);
         }
     }
 
