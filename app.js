@@ -5127,13 +5127,13 @@ function initializeMaintenanceFeature() {
     const supplierNoteInput = document.getElementById('maintenanceSupplierNoteInput');
     const addSupplierBtn = document.getElementById('maintenanceAddSupplierBtn');
 
-    if (!tasksSubtabBtn || !expensesSubtabBtn || !suppliersSubtabBtn || !schemaNameInput || !schemaInput || !addBtn || !deleteBtn || !schemaSelect || !toggleSchemaManagerBtn || !pinColorInput || !taskStatusInput || !legendInput || !canvas || !image || !invoiceInput || !scanInvoiceBtn || !invoiceScanStatus || !supplierSuggestionsLabel || !supplierSuggestionsContainer || !invoiceReviewPanel || !manualPasteTargetSelect || !pasteSelectedTextBtn || !llmProviderSelect || !llmApiKeyInput || !llmModelInput || !testAltLlmBtn || !runAltLlmBtn || !invoicePreviewImage || !invoicePreviewPdfContainer || !invoicePreviewPlaceholder || !invoicePreviewTitle || !expenseDateInput || !expenseTotalInput || !expenseCurrencyInput || !expensePayerSelect || !expensePaymentStatusSelect || !expenseSupplierInput || !expenseSupplierIbanInput || !expenseLinesInput || !expenseNoteInput || !expenseAiCommentInput || !addExpenseBtn || !supplierNameInput || !supplierContactInput || !supplierPhoneInput || !supplierIbanInput || !supplierNoteInput || !addSupplierBtn) return;
+    if (!tasksSubtabBtn || !expensesSubtabBtn || !suppliersSubtabBtn || !schemaNameInput || !schemaInput || !addBtn || !deleteBtn || !schemaSelect || !toggleSchemaManagerBtn || !pinColorInput || !taskStatusInput || !legendInput || !canvas || !image || !invoiceInput || !scanInvoiceBtn || !invoiceScanStatus || !expenseDateInput || !expenseTotalInput || !expenseCurrencyInput || !expensePayerSelect || !expensePaymentStatusSelect || !expenseSupplierInput || !expenseSupplierIbanInput || !expenseLinesInput || !expenseNoteInput || !expenseAiCommentInput || !addExpenseBtn || !supplierNameInput || !supplierContactInput || !supplierPhoneInput || !supplierIbanInput || !supplierNoteInput || !addSupplierBtn) return;
 
     const applyClipboardTextToTarget = (text) => {
         const value = String(text || '').trim();
         if (!value) return false;
 
-        const target = String(manualPasteTargetSelect.value || 'expenseSupplier');
+        const target = String(manualPasteTargetSelect?.value || 'expenseSupplier');
         if (target === 'expenseSupplier') {
             expenseSupplierInput.value = value;
             supplierNameInput.value = value;
@@ -5176,6 +5176,9 @@ function initializeMaintenanceFeature() {
     };
 
     const updateInvoicePreview = (file) => {
+        if (!invoicePreviewImage || !invoicePreviewPdfContainer || !invoicePreviewPlaceholder || !invoicePreviewTitle) {
+            return;
+        }
         if (maintenanceInvoicePreviewUrl) {
             URL.revokeObjectURL(maintenanceInvoicePreviewUrl);
             maintenanceInvoicePreviewUrl = '';
@@ -5220,7 +5223,9 @@ function initializeMaintenanceFeature() {
     invoiceInput.addEventListener('change', () => {
         const file = invoiceInput.files?.[0] || null;
         updateInvoicePreview(file);
-        invoiceReviewPanel.style.display = file ? 'block' : 'none';
+        if (invoiceReviewPanel) {
+            invoiceReviewPanel.style.display = file ? 'block' : 'none';
+        }
     });
 
     const defaultModelByProvider = {
@@ -5228,28 +5233,30 @@ function initializeMaintenanceFeature() {
         anthropic: 'claude-3-5-haiku-latest'
     };
 
-    llmProviderSelect.value = String(localStorage.getItem(MAINTENANCE_LLM_PROVIDER_STORAGE_KEY) || '');
-    llmApiKeyInput.value = String(localStorage.getItem(MAINTENANCE_LLM_API_KEY_STORAGE_KEY) || '');
-    llmModelInput.value = String(localStorage.getItem(MAINTENANCE_LLM_MODEL_STORAGE_KEY) || '');
-    if (!llmModelInput.value && defaultModelByProvider[llmProviderSelect.value]) {
-        llmModelInput.value = defaultModelByProvider[llmProviderSelect.value];
-    }
-
-    llmProviderSelect.addEventListener('change', () => {
-        const provider = String(llmProviderSelect.value || '');
-        localStorage.setItem(MAINTENANCE_LLM_PROVIDER_STORAGE_KEY, provider);
-        if (!llmModelInput.value && defaultModelByProvider[provider]) {
-            llmModelInput.value = defaultModelByProvider[provider];
+    if (llmProviderSelect && llmApiKeyInput && llmModelInput) {
+        llmProviderSelect.value = String(localStorage.getItem(MAINTENANCE_LLM_PROVIDER_STORAGE_KEY) || '');
+        llmApiKeyInput.value = String(localStorage.getItem(MAINTENANCE_LLM_API_KEY_STORAGE_KEY) || '');
+        llmModelInput.value = String(localStorage.getItem(MAINTENANCE_LLM_MODEL_STORAGE_KEY) || '');
+        if (!llmModelInput.value && defaultModelByProvider[llmProviderSelect.value]) {
+            llmModelInput.value = defaultModelByProvider[llmProviderSelect.value];
         }
-    });
-    llmApiKeyInput.addEventListener('change', () => {
-        const sanitized = sanitizeApiKey(llmApiKeyInput.value);
-        llmApiKeyInput.value = sanitized;
-        localStorage.setItem(MAINTENANCE_LLM_API_KEY_STORAGE_KEY, sanitized);
-    });
-    llmModelInput.addEventListener('change', () => {
-        localStorage.setItem(MAINTENANCE_LLM_MODEL_STORAGE_KEY, String(llmModelInput.value || '').trim());
-    });
+
+        llmProviderSelect.addEventListener('change', () => {
+            const provider = String(llmProviderSelect.value || '');
+            localStorage.setItem(MAINTENANCE_LLM_PROVIDER_STORAGE_KEY, provider);
+            if (!llmModelInput.value && defaultModelByProvider[provider]) {
+                llmModelInput.value = defaultModelByProvider[provider];
+            }
+        });
+        llmApiKeyInput.addEventListener('change', () => {
+            const sanitized = sanitizeApiKey(llmApiKeyInput.value);
+            llmApiKeyInput.value = sanitized;
+            localStorage.setItem(MAINTENANCE_LLM_API_KEY_STORAGE_KEY, sanitized);
+        });
+        llmModelInput.addEventListener('change', () => {
+            localStorage.setItem(MAINTENANCE_LLM_MODEL_STORAGE_KEY, String(llmModelInput.value || '').trim());
+        });
+    }
 
     const applySupplierSelection = (name) => {
         const selectedName = String(name || '').trim();
@@ -5270,6 +5277,7 @@ function initializeMaintenanceFeature() {
     };
 
     const renderSupplierSuggestions = (candidates) => {
+        if (!supplierSuggestionsLabel || !supplierSuggestionsContainer) return;
         const safeList = Array.isArray(candidates) ? candidates.filter(item => String(item?.name || '').trim()) : [];
         supplierSuggestionsContainer.innerHTML = '';
         if (!safeList.length) {
@@ -5442,7 +5450,9 @@ function initializeMaintenanceFeature() {
                 expenseDateInput.value = invoiceDate;
             }
 
-            invoiceReviewPanel.style.display = 'block';
+            if (invoiceReviewPanel) {
+                invoiceReviewPanel.style.display = 'block';
+            }
 
             renderSupplierSuggestions(supplierCandidates);
 
@@ -5521,12 +5531,15 @@ function initializeMaintenanceFeature() {
                 : t('Scan facture: extraction terminée (vérifie les champs).', 'Escaneo factura: extracción terminada (verifica los campos).');
         } catch (error) {
             renderSupplierSuggestions([]);
-            invoiceReviewPanel.style.display = 'none';
+            if (invoiceReviewPanel) {
+                invoiceReviewPanel.style.display = 'none';
+            }
             invoiceScanStatus.textContent = `${t('Scan facture: échec', 'Escaneo factura: error')} (${String(error?.message || error)})`;
         }
     });
 
-    pasteSelectedTextBtn.addEventListener('click', async () => {
+    if (pasteSelectedTextBtn && manualPasteTargetSelect) {
+        pasteSelectedTextBtn.addEventListener('click', async () => {
         try {
             const clipboardText = await navigator.clipboard.readText();
             if (!clipboardText.trim()) {
@@ -5540,9 +5553,11 @@ function initializeMaintenanceFeature() {
         } catch (error) {
             invoiceScanStatus.textContent = `${t('Lecture presse-papiers impossible', 'No se puede leer el portapapeles')}: ${String(error?.message || error)}`;
         }
-    });
+        });
+    }
 
-    runAltLlmBtn.addEventListener('click', async () => {
+    if (runAltLlmBtn && llmProviderSelect && llmApiKeyInput && llmModelInput) {
+        runAltLlmBtn.addEventListener('click', async () => {
         const provider = String(llmProviderSelect.value || '').trim();
         const apiKey = sanitizeApiKey(llmApiKeyInput.value);
         const model = String(llmModelInput.value || '').trim();
@@ -5600,9 +5615,11 @@ function initializeMaintenanceFeature() {
             const readableError = formatAlternativeLlmRuntimeError(error, provider);
             invoiceScanStatus.textContent = `${t('Échec analyse IA', 'Error análisis IA')}: ${readableError}`;
         }
-    });
+        });
+    }
 
-    testAltLlmBtn.addEventListener('click', async () => {
+    if (testAltLlmBtn && llmProviderSelect && llmApiKeyInput && llmModelInput) {
+        testAltLlmBtn.addEventListener('click', async () => {
         const provider = String(llmProviderSelect.value || '').trim();
         const apiKey = sanitizeApiKey(llmApiKeyInput.value);
         const model = String(llmModelInput.value || '').trim();
@@ -5625,7 +5642,8 @@ function initializeMaintenanceFeature() {
             const readableError = formatAlternativeLlmRuntimeError(error, provider);
             invoiceScanStatus.textContent = `${t('Test API échoué', 'Prueba API fallida')}: ${readableError}`;
         }
-    });
+        });
+    }
 
     addExpenseBtn.addEventListener('click', () => {
         const totalAmount = toFiniteAmount(expenseTotalInput.value);
@@ -5662,7 +5680,9 @@ function initializeMaintenanceFeature() {
         expenseAiCommentInput.value = '';
         invoiceInput.value = '';
         maintenanceLastScannedText = '';
-        invoiceReviewPanel.style.display = 'none';
+        if (invoiceReviewPanel) {
+            invoiceReviewPanel.style.display = 'none';
+        }
         updateInvoicePreview(null);
         renderSupplierSuggestions([]);
         invoiceScanStatus.textContent = t('Dépense ajoutée.', 'Gasto añadido.');
