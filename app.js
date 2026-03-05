@@ -97,6 +97,10 @@ let aiTrafficAutoHideTimer = null;
 let weatherFocusMarker = null;
 let weatherFocusPoint = null;
 let weatherPointerPlacementMode = false;
+let maintenanceBoards = [];
+let selectedMaintenanceBoardId = null;
+let activeMaintenanceAnnotationId = null;
+let maintenanceSchemaManagerVisible = false;
 let protectedDataLoaded = false;
 let overpassLastRequestAt = 0;
 const overpassQueryCache = new Map();
@@ -107,6 +111,14 @@ const MAP_VIEW_STORAGE_KEY = 'ceiboMapView';
 const APP_LANGUAGE_STORAGE_KEY = 'ceiboAppLanguage';
 const TRANSPARENT_TILE_DATA_URI = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
 const OWM_TILE_APPID_STORAGE_KEY = 'ceiboOwmTileAppId';
+const MAINTENANCE_BOARDS_STORAGE_KEY = 'ceiboMaintenanceBoardsV1';
+const MAINTENANCE_COLOR_ORDER = ['red', 'orange', 'green', 'blue'];
+const MAINTENANCE_COLORS = {
+    green: { key: 'green', hex: '#33c26f', fr: 'Vert · pas urgent', es: 'Verde · no urgente', groupFr: 'Vert · Pas urgent', groupEs: 'Verde · No urgente' },
+    orange: { key: 'orange', hex: '#ff9f2f', fr: 'Orange · important', es: 'Naranja · importante', groupFr: 'Orange · Important', groupEs: 'Naranja · Importante' },
+    red: { key: 'red', hex: '#ff5c5c', fr: 'Rouge · urgent', es: 'Rojo · urgente', groupFr: 'Rouge · Urgent', groupEs: 'Rojo · Urgente' },
+    blue: { key: 'blue', hex: '#4ca3ff', fr: 'Bleu · information', es: 'Azul · información', groupFr: 'Bleu · Information', groupEs: 'Azul · Información' }
+};
 const STRONG_WAVE_THRESHOLD_M = 1.8;
 const LAND_DATA_SOURCES = [
     {
@@ -224,6 +236,7 @@ function applyLanguageToUi() {
     setElementText('#weatherTabBtn', t('Météo', 'Meteo'));
     setElementText('#arrivalTabBtn', t('Arrivée', 'Llegada'));
     setElementText('#waypointTabBtn', t('Waypoint', 'Waypoint'));
+    setElementText('#maintenanceTabBtn', t('Maintenance', 'Mantenimiento'));
 
     setElementText('label[for="routeNameInput"]', t('Nom de la route:', 'Nombre de la ruta:'));
     setElementPlaceholder('#routeNameInput', t('Nom de la route', 'Nombre de la ruta'));
@@ -373,6 +386,23 @@ function applyLanguageToUi() {
     setElementText('label[for="waypointBottomTypeInput"]', t('Type de fond:', 'Tipo de fondo:'));
     setElementText('#waypointSavedAnchoragesLabel', t('Mouillages enregistrés:', 'Fondeos guardados:'));
 
+    setElementText('label[for="maintenanceSchemaNameInput"]', t('Nom du schéma:', 'Nombre del esquema:'));
+    setElementPlaceholder('#maintenanceSchemaNameInput', t('Ex: Compartiment moteur', 'Ej: Compartimento motor'));
+    setElementText('label[for="maintenanceSchemaInput"]', t('Importer schéma (image):', 'Importar esquema (imagen):'));
+    setElementText('#maintenanceToggleSchemaManagerBtn', t('Gérer les schémas', 'Gestionar esquemas'));
+    setElementText('#maintenanceAddSchemaBtn', t('Ajouter schéma', 'Añadir esquema'));
+    setElementText('#maintenanceDeleteSchemaBtn', t('Supprimer schéma', 'Eliminar esquema'));
+    setElementText('label[for="maintenanceSchemaSelect"]', t('Schémas enregistrés:', 'Esquemas guardados:'));
+    setElementText('label[for="maintenancePinColorInput"]', t('Couleur pastille:', 'Color marcador:'));
+    setElementText('#maintenancePinColorInput option[value="green"]', t('Vert · pas urgent', 'Verde · no urgente'));
+    setElementText('#maintenancePinColorInput option[value="orange"]', t('Orange · important', 'Naranja · importante'));
+    setElementText('#maintenancePinColorInput option[value="red"]', t('Rouge · urgent', 'Rojo · urgente'));
+    setElementText('#maintenancePinColorInput option[value="blue"]', t('Bleu · information', 'Azul · información'));
+    setElementText('label[for="maintenanceLegendInput"]', t('Légende:', 'Leyenda:'));
+    setElementPlaceholder('#maintenanceLegendInput', t('Ex: Changer turbine pompe eau', 'Ej: Cambiar impulsor bomba agua'));
+    setElementText('#maintenanceCanvasPlaceholder', t('Aucun schéma sélectionné', 'Ningún esquema seleccionado'));
+    setElementText('#maintenanceLegendListLabel', t('Tâches par schéma:', 'Tareas por esquema:'));
+
     const creator = document.querySelector('.creator-credit');
     if (creator) creator.textContent = t('Programme créé par Max Patissier', 'Programa creado por Max Patissier');
 
@@ -383,6 +413,8 @@ function applyLanguageToUi() {
     }
 
     updateSelectedWaypointInfo();
+    updateMaintenanceSchemaManagerToggleText();
+    renderMaintenanceBoard();
     updateMeasureInfo();
     setMeasureMode(measureModeEnabled);
     refreshBaseLayerControlLanguage();
@@ -457,7 +489,8 @@ function setProtectedTabsEnabled(enabled) {
         'engineTabBtn',
         'weatherTabBtn',
         'arrivalTabBtn',
-        'waypointTabBtn'
+        'waypointTabBtn',
+        'maintenanceTabBtn'
     ];
 
     protectedTabIds.forEach(id => {
@@ -3568,6 +3601,398 @@ function saveArrayToStorage(storageKey, data) {
     localStorage.setItem(storageKey, JSON.stringify(safeArray));
 }
 
+function getMaintenanceColorMeta(rawValue) {
+    const normalized = String(rawValue || '').trim().toLowerCase();
+    if (MAINTENANCE_COLORS[normalized]) return MAINTENANCE_COLORS[normalized];
+
+    const byHex = Object.values(MAINTENANCE_COLORS).find(color => color.hex.toLowerCase() === normalized);
+    if (byHex) return byHex;
+
+    return MAINTENANCE_COLORS.blue;
+}
+
+function updateMaintenanceSchemaManagerToggleText() {
+    const toggleBtn = document.getElementById('maintenanceToggleSchemaManagerBtn');
+    if (!toggleBtn) return;
+
+    toggleBtn.textContent = maintenanceSchemaManagerVisible
+        ? t('Masquer gestion des schémas', 'Ocultar gestión de esquemas')
+        : t('Gérer les schémas', 'Gestionar esquemas');
+}
+
+function setMaintenanceSchemaManagerVisibility(visible) {
+    maintenanceSchemaManagerVisible = !!visible;
+    const manager = document.getElementById('maintenanceSchemaManager');
+    if (manager) {
+        manager.style.display = maintenanceSchemaManagerVisible ? '' : 'none';
+    }
+    updateMaintenanceSchemaManagerToggleText();
+}
+
+function sanitizeMaintenanceBoard(board, fallbackIndex = 0) {
+    const safeName = String(board?.name || `${t('Schéma', 'Esquema')} ${fallbackIndex + 1}`).trim() || `${t('Schéma', 'Esquema')} ${fallbackIndex + 1}`;
+    const safeImageDataUrl = typeof board?.imageDataUrl === 'string' ? board.imageDataUrl : '';
+    const rawAnnotations = Array.isArray(board?.annotations) ? board.annotations : [];
+
+    const annotations = rawAnnotations
+        .map((annotation, index) => {
+            const xPercent = Number(annotation?.xPercent);
+            const yPercent = Number(annotation?.yPercent);
+            if (!Number.isFinite(xPercent) || !Number.isFinite(yPercent)) return null;
+
+            const colorMeta = getMaintenanceColorMeta(annotation?.colorKey || annotation?.color);
+
+            return {
+                id: String(annotation?.id || `maintenance-ann-${Date.now()}-${index}`),
+                xPercent: Math.max(0, Math.min(100, xPercent)),
+                yPercent: Math.max(0, Math.min(100, yPercent)),
+                colorKey: colorMeta.key,
+                legend: String(annotation?.legend || '').trim(),
+                createdAt: String(annotation?.createdAt || new Date().toISOString())
+            };
+        })
+        .filter(Boolean);
+
+    return {
+        id: String(board?.id || `maintenance-${Date.now()}-${fallbackIndex}`),
+        name: safeName,
+        imageDataUrl: safeImageDataUrl,
+        annotations,
+        createdAt: String(board?.createdAt || new Date().toISOString()),
+        updatedAt: String(board?.updatedAt || new Date().toISOString())
+    };
+}
+
+function loadMaintenanceBoards() {
+    maintenanceBoards = loadArrayFromStorage(MAINTENANCE_BOARDS_STORAGE_KEY)
+        .map((board, index) => sanitizeMaintenanceBoard(board, index));
+
+    if (!maintenanceBoards.length) {
+        selectedMaintenanceBoardId = null;
+        return;
+    }
+
+    const selectedStillExists = maintenanceBoards.some(board => board.id === selectedMaintenanceBoardId);
+    if (!selectedStillExists) {
+        selectedMaintenanceBoardId = maintenanceBoards[0].id;
+    }
+}
+
+function persistMaintenanceBoards() {
+    saveArrayToStorage(MAINTENANCE_BOARDS_STORAGE_KEY, maintenanceBoards);
+}
+
+function getSelectedMaintenanceBoard() {
+    return maintenanceBoards.find(board => board.id === selectedMaintenanceBoardId) || null;
+}
+
+function setMaintenanceStatus(message, isError = false) {
+    const status = document.getElementById('maintenanceStatus');
+    if (!status) return;
+    status.textContent = message;
+    status.style.color = isError ? '#ff8f8f' : '';
+}
+
+function refreshMaintenanceBoardSelect() {
+    const select = document.getElementById('maintenanceSchemaSelect');
+    if (!select) return;
+
+    select.innerHTML = '';
+    maintenanceBoards.forEach((board, index) => {
+        const option = document.createElement('option');
+        option.value = board.id;
+        option.textContent = `${index + 1}. ${board.name}`;
+        select.appendChild(option);
+    });
+
+    if (!maintenanceBoards.length) return;
+    const selectedIndex = maintenanceBoards.findIndex(board => board.id === selectedMaintenanceBoardId);
+    select.selectedIndex = selectedIndex >= 0 ? selectedIndex : 0;
+}
+
+function setActiveMaintenanceAnnotation(annotationId) {
+    activeMaintenanceAnnotationId = annotationId || null;
+
+    document.querySelectorAll('#maintenancePinsLayer .maintenance-pin').forEach(node => {
+        const isActive =
+            node.getAttribute('data-ann-id') === activeMaintenanceAnnotationId &&
+            node.getAttribute('data-board-id') === selectedMaintenanceBoardId;
+        node.classList.toggle('maintenance-pin--active', isActive);
+    });
+
+    document.querySelectorAll('#maintenanceLegendList .maintenance-legend-item').forEach(node => {
+        const isActive =
+            node.getAttribute('data-ann-id') === activeMaintenanceAnnotationId &&
+            node.getAttribute('data-board-id') === selectedMaintenanceBoardId;
+        node.classList.toggle('maintenance-legend-item--active', isActive);
+    });
+}
+
+function renderMaintenanceBoard() {
+    const image = document.getElementById('maintenanceSchemaImage');
+    const pinsLayer = document.getElementById('maintenancePinsLayer');
+    const placeholder = document.getElementById('maintenanceCanvasPlaceholder');
+    const legendList = document.getElementById('maintenanceLegendList');
+    if (!image || !pinsLayer || !placeholder || !legendList) return;
+
+    refreshMaintenanceBoardSelect();
+
+    const board = getSelectedMaintenanceBoard();
+    pinsLayer.innerHTML = '';
+    legendList.innerHTML = '';
+
+    if (!board) {
+        image.style.display = 'none';
+        image.removeAttribute('src');
+        placeholder.style.display = 'flex';
+        activeMaintenanceAnnotationId = null;
+        setMaintenanceSchemaManagerVisibility(true);
+        setMaintenanceStatus(t('Maintenance: ajoute un schéma pour commencer.', 'Mantenimiento: añade un esquema para empezar.'));
+        return;
+    }
+
+    if (board.imageDataUrl) {
+        image.src = board.imageDataUrl;
+        image.style.display = 'block';
+        placeholder.style.display = 'none';
+    } else {
+        image.style.display = 'none';
+        image.removeAttribute('src');
+        placeholder.style.display = 'flex';
+    }
+
+    if (activeMaintenanceAnnotationId && !board.annotations.some(item => item.id === activeMaintenanceAnnotationId)) {
+        activeMaintenanceAnnotationId = null;
+    }
+
+    board.annotations.forEach((annotation, index) => {
+        const pointLabel = `${t('Point', 'Punto')} ${index + 1}`;
+        const pinColorMeta = getMaintenanceColorMeta(annotation.colorKey);
+
+        const pin = document.createElement('div');
+        pin.className = 'maintenance-pin';
+        pin.setAttribute('data-ann-id', annotation.id);
+        pin.setAttribute('data-board-id', board.id);
+        pin.style.left = `${annotation.xPercent}%`;
+        pin.style.top = `${annotation.yPercent}%`;
+        pin.style.backgroundColor = pinColorMeta.hex;
+        pin.title = annotation.legend || pointLabel;
+        pinsLayer.appendChild(pin);
+    });
+
+    maintenanceBoards.forEach((schemaBoard, schemaIndex) => {
+        const schemaGroup = document.createElement('div');
+        schemaGroup.className = 'maintenance-schema-group';
+
+        const schemaHeader = document.createElement('button');
+        schemaHeader.type = 'button';
+        schemaHeader.className = 'maintenance-schema-title';
+        if (schemaBoard.id === selectedMaintenanceBoardId) {
+            schemaHeader.classList.add('active');
+        }
+        schemaHeader.textContent = `${schemaIndex + 1}. ${schemaBoard.name} (${schemaBoard.annotations.length})`;
+        schemaHeader.addEventListener('click', () => {
+            selectedMaintenanceBoardId = schemaBoard.id;
+            activeMaintenanceAnnotationId = null;
+            renderMaintenanceBoard();
+            setMaintenanceStatus(t(`Schéma chargé: ${schemaBoard.name}`, `Esquema cargado: ${schemaBoard.name}`));
+        });
+        schemaGroup.appendChild(schemaHeader);
+
+        if (!schemaBoard.annotations.length) {
+            const empty = document.createElement('div');
+            empty.className = 'maintenance-legend-empty';
+            empty.textContent = t('Aucune tâche sur ce schéma.', 'Sin tareas en este esquema.');
+            schemaGroup.appendChild(empty);
+            legendList.appendChild(schemaGroup);
+            return;
+        }
+
+        const sortedAnnotations = [...schemaBoard.annotations].sort((a, b) => {
+            const colorA = getMaintenanceColorMeta(a.colorKey).key;
+            const colorB = getMaintenanceColorMeta(b.colorKey).key;
+            const rankA = MAINTENANCE_COLOR_ORDER.indexOf(colorA);
+            const rankB = MAINTENANCE_COLOR_ORDER.indexOf(colorB);
+            if (rankA !== rankB) return rankA - rankB;
+            return String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
+        });
+
+        sortedAnnotations.forEach((annotation, index) => {
+            const colorMeta = getMaintenanceColorMeta(annotation.colorKey);
+            const pointLabel = `${t('Point', 'Punto')} ${index + 1}`;
+
+            const item = document.createElement('div');
+            item.className = 'maintenance-legend-item';
+            item.setAttribute('data-ann-id', annotation.id);
+            item.setAttribute('data-board-id', schemaBoard.id);
+
+            const head = document.createElement('div');
+            head.className = 'maintenance-legend-head';
+
+            const left = document.createElement('span');
+            const dot = document.createElement('span');
+            dot.className = 'maintenance-legend-dot';
+            dot.style.backgroundColor = colorMeta.hex;
+
+            const title = document.createElement('strong');
+            title.textContent = pointLabel;
+            left.appendChild(dot);
+            left.appendChild(title);
+            left.appendChild(document.createTextNode(` — ${annotation.legend || t('Sans légende', 'Sin leyenda')}`));
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.type = 'button';
+            deleteBtn.className = 'maintenance-delete-btn';
+            deleteBtn.textContent = t('Supprimer', 'Eliminar');
+            deleteBtn.addEventListener('click', event => {
+                event.stopPropagation();
+                schemaBoard.annotations = schemaBoard.annotations.filter(item => item.id !== annotation.id);
+                schemaBoard.updatedAt = new Date().toISOString();
+                if (activeMaintenanceAnnotationId === annotation.id && selectedMaintenanceBoardId === schemaBoard.id) {
+                    activeMaintenanceAnnotationId = null;
+                }
+                persistMaintenanceBoards();
+                renderMaintenanceBoard();
+                setMaintenanceStatus(t('Pastille supprimée.', 'Marcador eliminado.'));
+            });
+
+            item.addEventListener('click', () => {
+                selectedMaintenanceBoardId = schemaBoard.id;
+                activeMaintenanceAnnotationId = annotation.id;
+                renderMaintenanceBoard();
+            });
+
+            head.appendChild(left);
+            head.appendChild(deleteBtn);
+            item.appendChild(head);
+            schemaGroup.appendChild(item);
+        });
+
+        legendList.appendChild(schemaGroup);
+    });
+
+    setActiveMaintenanceAnnotation(activeMaintenanceAnnotationId);
+
+    if (!board.annotations.length) {
+        setMaintenanceStatus(t('Clique sur le schéma pour ajouter une pastille.', 'Haz clic en el esquema para añadir un marcador.'));
+    }
+}
+
+function initializeMaintenanceFeature() {
+    const schemaNameInput = document.getElementById('maintenanceSchemaNameInput');
+    const schemaInput = document.getElementById('maintenanceSchemaInput');
+    const addBtn = document.getElementById('maintenanceAddSchemaBtn');
+    const deleteBtn = document.getElementById('maintenanceDeleteSchemaBtn');
+    const schemaSelect = document.getElementById('maintenanceSchemaSelect');
+    const toggleSchemaManagerBtn = document.getElementById('maintenanceToggleSchemaManagerBtn');
+    const pinColorInput = document.getElementById('maintenancePinColorInput');
+    const legendInput = document.getElementById('maintenanceLegendInput');
+    const canvas = document.getElementById('maintenanceCanvas');
+    const image = document.getElementById('maintenanceSchemaImage');
+
+    if (!schemaNameInput || !schemaInput || !addBtn || !deleteBtn || !schemaSelect || !toggleSchemaManagerBtn || !pinColorInput || !legendInput || !canvas || !image) return;
+
+    pinColorInput.value = 'red';
+    setMaintenanceSchemaManagerVisibility(false);
+
+    loadMaintenanceBoards();
+    if (!maintenanceBoards.length) {
+        setMaintenanceSchemaManagerVisibility(true);
+    }
+    renderMaintenanceBoard();
+
+    toggleSchemaManagerBtn.addEventListener('click', () => {
+        setMaintenanceSchemaManagerVisibility(!maintenanceSchemaManagerVisible);
+    });
+
+    schemaSelect.addEventListener('change', () => {
+        selectedMaintenanceBoardId = String(schemaSelect.value || '');
+        activeMaintenanceAnnotationId = null;
+        renderMaintenanceBoard();
+    });
+
+    addBtn.addEventListener('click', () => {
+        const file = schemaInput.files?.[0];
+        if (!file || !file.type.startsWith('image/')) {
+            setMaintenanceStatus(t('Choisis une image valide pour ajouter un schéma.', 'Elige una imagen válida para añadir un esquema.'), true);
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = () => {
+            const boardName = String(schemaNameInput.value || '').trim() || `${t('Schéma', 'Esquema')} ${maintenanceBoards.length + 1}`;
+            const newBoard = sanitizeMaintenanceBoard({
+                id: `maintenance-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                name: boardName,
+                imageDataUrl: String(reader.result || ''),
+                annotations: []
+            }, maintenanceBoards.length);
+
+            maintenanceBoards.unshift(newBoard);
+            selectedMaintenanceBoardId = newBoard.id;
+            persistMaintenanceBoards();
+            schemaInput.value = '';
+            legendInput.value = '';
+            setMaintenanceSchemaManagerVisibility(false);
+            renderMaintenanceBoard();
+            setMaintenanceStatus(t('Schéma ajouté. Clique sur l\'image pour poser une pastille.', 'Esquema añadido. Haz clic en la imagen para colocar un marcador.'));
+        };
+        reader.readAsDataURL(file);
+    });
+
+    deleteBtn.addEventListener('click', () => {
+        const board = getSelectedMaintenanceBoard();
+        if (!board) return;
+
+        const confirmed = window.confirm(t(`Supprimer le schéma "${board.name}" et ses pastilles ?`, `¿Eliminar el esquema "${board.name}" y sus marcadores?`));
+        if (!confirmed) return;
+
+        maintenanceBoards = maintenanceBoards.filter(item => item.id !== board.id);
+        selectedMaintenanceBoardId = maintenanceBoards[0]?.id || null;
+        activeMaintenanceAnnotationId = null;
+        persistMaintenanceBoards();
+        if (!maintenanceBoards.length) {
+            setMaintenanceSchemaManagerVisibility(true);
+        }
+        renderMaintenanceBoard();
+        setMaintenanceStatus(t('Schéma supprimé.', 'Esquema eliminado.'));
+    });
+
+    canvas.addEventListener('click', event => {
+        const board = getSelectedMaintenanceBoard();
+        if (!board || !board.imageDataUrl) return;
+
+        const legend = String(legendInput.value || '').trim();
+        if (!legend) {
+            setMaintenanceStatus(t('Renseigne une légende avant d\'ajouter une pastille.', 'Escribe una leyenda antes de añadir un marcador.'), true);
+            return;
+        }
+
+        const rect = image.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+        if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) return;
+
+        const xPercent = ((event.clientX - rect.left) / rect.width) * 100;
+        const yPercent = ((event.clientY - rect.top) / rect.height) * 100;
+        const colorMeta = getMaintenanceColorMeta(pinColorInput.value);
+
+        board.annotations.push({
+            id: `maintenance-ann-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            xPercent: Math.max(0, Math.min(100, xPercent)),
+            yPercent: Math.max(0, Math.min(100, yPercent)),
+            colorKey: colorMeta.key,
+            legend,
+            createdAt: new Date().toISOString()
+        });
+        board.updatedAt = new Date().toISOString();
+
+        persistMaintenanceBoards();
+        legendInput.value = '';
+        renderMaintenanceBoard();
+        setMaintenanceStatus(t('Pastille ajoutée.', 'Marcador añadido.'));
+    });
+}
+
 function setCloudAuthStatus(message, isError = false) {
     const status = document.getElementById('cloudAuthStatus');
     if (!status) return;
@@ -4427,6 +4852,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     const weatherTabBtn = document.getElementById('weatherTabBtn');
     const arrivalTabBtn = document.getElementById('arrivalTabBtn');
     const waypointTabBtn = document.getElementById('waypointTabBtn');
+    const maintenanceTabBtn = document.getElementById('maintenanceTabBtn');
     const routingTab = document.getElementById('routingTab');
     const routesTab = document.getElementById('routesTab');
     const cloudTab = document.getElementById('cloudTab');
@@ -4435,6 +4861,29 @@ document.addEventListener('DOMContentLoaded', async function() {
     const weatherTab = document.getElementById('weatherTab');
     const arrivalTab = document.getElementById('arrivalTab');
     const waypointTab = document.getElementById('waypointTab');
+    const maintenanceTab = document.getElementById('maintenanceTab');
+    const mapContainer = document.getElementById('map');
+    const maintenanceMapPanel = document.getElementById('maintenanceMapPanel');
+
+    function setMaintenanceMapMode(enabled) {
+        if (mapContainer) {
+            mapContainer.style.display = enabled ? 'none' : '';
+        }
+        if (maintenanceMapPanel) {
+            maintenanceMapPanel.style.display = enabled ? 'block' : 'none';
+        }
+
+        if (enabled) {
+            renderMaintenanceBoard();
+            return;
+        }
+
+        window.setTimeout(() => {
+            if (map) {
+                map.invalidateSize();
+            }
+        }, 80);
+    }
 
     function activateTab(tabName) {
         if (isAuthGateLocked() && tabName !== 'cloud') {
@@ -4451,6 +4900,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         const isWeather = tabName === 'weather';
         const isArrival = tabName === 'arrival';
         const isWaypoint = tabName === 'waypoint';
+        const isMaintenance = tabName === 'maintenance';
 
         routingTabBtn.classList.toggle('active', isRouting);
         routesTabBtn.classList.toggle('active', isRoutes);
@@ -4460,6 +4910,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         weatherTabBtn.classList.toggle('active', isWeather);
         arrivalTabBtn.classList.toggle('active', isArrival);
         waypointTabBtn.classList.toggle('active', isWaypoint);
+        maintenanceTabBtn.classList.toggle('active', isMaintenance);
 
         routingTab.classList.toggle('active', isRouting);
         routesTab.classList.toggle('active', isRoutes);
@@ -4469,6 +4920,8 @@ document.addEventListener('DOMContentLoaded', async function() {
         weatherTab.classList.toggle('active', isWeather);
         arrivalTab.classList.toggle('active', isArrival);
         waypointTab.classList.toggle('active', isWaypoint);
+        maintenanceTab.classList.toggle('active', isMaintenance);
+        setMaintenanceMapMode(isMaintenance);
 
         if (isWeather) {
             refreshWeatherOutlook();
@@ -4487,6 +4940,8 @@ document.addEventListener('DOMContentLoaded', async function() {
     weatherTabBtn.addEventListener('click', () => activateTab('weather'));
     arrivalTabBtn.addEventListener('click', () => activateTab('arrival'));
     waypointTabBtn.addEventListener('click', () => activateTab('waypoint'));
+    maintenanceTabBtn.addEventListener('click', () => activateTab('maintenance'));
+    setMaintenanceMapMode(false);
 
     document.getElementById("tackingTimeInput").value = tackingTimeHours;
     document.getElementById("tackingTimeInput").addEventListener("change", function(e) {
@@ -4961,6 +5416,7 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     resetWaypointPhotoFormValues();
     setWaypointPhotoEditMode(null);
+    initializeMaintenanceFeature();
     updateCloudAuthUi();
     updateCloudDataSourceStatus('initialisation', 0, 0);
     await applyAuthGateState({ clearWhenLocked: true });

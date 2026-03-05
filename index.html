@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>CEIBO Router cloud</title>
+    <title>Gestion du CEIBO</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/jpeg" href="ceibo-favicon.jpg">
@@ -17,7 +17,7 @@
 <body>
 
 <div id="sidebar">
-    <h2 id="appTitle">CEIBO Router Cloud version</h2>
+    <h2 id="appTitle">Gestion du CEIBO</h2>
 
     <div class="sidebar-tabs">
         <button id="cloudTabBtn" class="tab-btn active" type="button">Cloud</button>
@@ -28,6 +28,7 @@
         <button id="weatherTabBtn" class="tab-btn" type="button">Météo</button>
         <button id="arrivalTabBtn" class="tab-btn" type="button">Arrivée</button>
         <button id="waypointTabBtn" class="tab-btn" type="button">Waypoint</button>
+        <button id="maintenanceTabBtn" class="tab-btn" type="button">Maintenance</button>
     </div>
 
     <div id="routingTab" class="tab-panel">
@@ -365,6 +366,47 @@
         <div id="waypointPhotoList"></div>
     </div>
 
+    <div id="maintenanceTab" class="tab-panel">
+        <button id="maintenanceToggleSchemaManagerBtn" type="button" class="maintenance-toggle-btn">Gérer les schémas</button>
+
+        <div id="maintenanceSchemaManager" class="maintenance-schema-manager" style="display:none;">
+            <label for="maintenanceSchemaNameInput" style="display:block; margin-top:10px; font-size:12px;">Nom du schéma:</label>
+            <input type="text" id="maintenanceSchemaNameInput" placeholder="Ex: Compartiment moteur" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
+
+            <label for="maintenanceSchemaInput" style="display:block; margin-top:10px; font-size:12px;">Importer schéma (image):</label>
+            <input type="file" id="maintenanceSchemaInput" accept="image/*" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
+
+            <div class="button-row">
+                <button id="maintenanceAddSchemaBtn" style="flex:1;">Ajouter schéma</button>
+                <button id="maintenanceDeleteSchemaBtn" style="flex:1;">Supprimer schéma</button>
+            </div>
+
+            <label for="maintenanceSchemaSelect" style="display:block; margin-top:12px; font-size:12px;">Schémas enregistrés:</label>
+            <select id="maintenanceSchemaSelect" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;"></select>
+        </div>
+
+        <div class="maintenance-controls">
+            <div class="maintenance-control-item">
+                <label for="maintenancePinColorInput">Couleur pastille:</label>
+                <select id="maintenancePinColorInput">
+                    <option value="green">Vert · pas urgent</option>
+                    <option value="orange">Orange · important</option>
+                    <option value="red" selected>Rouge · urgent</option>
+                    <option value="blue">Bleu · information</option>
+                </select>
+            </div>
+            <div class="maintenance-control-item" style="flex:1;">
+                <label for="maintenanceLegendInput">Légende:</label>
+                <input type="text" id="maintenanceLegendInput" placeholder="Ex: Changer turbine pompe eau" style="width:100%; padding:8px; box-sizing:border-box;">
+            </div>
+        </div>
+
+        <div id="maintenanceStatus" style="margin-top:6px; font-size:12px; opacity:0.9;">Maintenance: ajoute un schéma pour commencer.</div>
+
+        <label id="maintenanceLegendListLabel" style="display:block; margin-top:12px; font-size:12px;">Légendes / tâches:</label>
+        <div id="maintenanceLegendList"></div>
+    </div>
+
     <div class="sidebar-footer">
         <span class="creator-credit">Programa creado por Max Patissier</span>
         <div class="lang-switch" aria-label="Sélecteur de langue">
@@ -376,6 +418,13 @@
 </div>
 
 <div id="map"></div>
+<div id="maintenanceMapPanel" style="display:none;">
+    <div id="maintenanceCanvas" class="maintenance-canvas" title="Clique sur le schéma pour ajouter une pastille">
+        <img id="maintenanceSchemaImage" alt="Schéma maintenance" style="display:none;">
+        <div id="maintenancePinsLayer" class="maintenance-pins-layer"></div>
+        <div id="maintenanceCanvasPlaceholder" class="maintenance-canvas-placeholder">Aucun schéma sélectionné</div>
+    </div>
+</div>
 
 <div id="aiTrafficOverlay" class="ai-traffic-overlay" style="display:none;">
     <div class="ai-traffic-window">
