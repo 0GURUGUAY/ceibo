@@ -42,6 +42,17 @@ body {
     white-space: nowrap;
 }
 
+.build-version-badge {
+    font-size: 10px;
+    line-height: 1;
+    opacity: 0.75;
+    color: #8fe7ff;
+    border: 1px solid rgba(143, 231, 255, 0.35);
+    border-radius: 999px;
+    padding: 4px 7px;
+    white-space: nowrap;
+}
+
 .lang-switch {
     display: inline-flex;
     align-items: center;
@@ -143,6 +154,12 @@ body {
     background: #0f1824;
     display: flex;
     flex-direction: column;
+}
+
+#maintenanceInvoicePreviewTitle {
+    position: static;
+    inset: auto;
+    pointer-events: none;
 }
 
 #maintenanceInvoicePreviewImage,
@@ -269,6 +286,27 @@ body {
     width: 100%;
     padding: 8px;
     box-sizing: border-box;
+}
+
+#maintenancePinColorInput option {
+    font-weight: 700;
+    background: #111;
+}
+
+#maintenancePinColorInput option[value="green"] {
+    color: #3ddc97;
+}
+
+#maintenancePinColorInput option[value="orange"] {
+    color: #ffb347;
+}
+
+#maintenancePinColorInput option[value="red"] {
+    color: #ff6b6b;
+}
+
+#maintenancePinColorInput option[value="blue"] {
+    color: #7cc9ff;
 }
 
 .button-row {
@@ -538,6 +576,18 @@ button:focus-visible {
     background: #ff9a3a;
 }
 
+.maintenance-expense-subtabs {
+    margin-top: 8px;
+}
+
+.maintenance-expense-subpanel {
+    display: none;
+}
+
+.maintenance-expense-subpanel.active {
+    display: block;
+}
+
 .maintenance-subpanel {
     display: none;
 }
@@ -671,6 +721,53 @@ button:focus-visible {
     margin-top: 10px;
 }
 
+.maintenance-suppliers-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 10px;
+}
+
+.maintenance-supplier-list-header {
+    margin-top: 8px;
+    padding: 6px 8px;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.2px;
+    opacity: 0.86;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.maintenance-supplier-row {
+    margin-top: 8px;
+    padding: 8px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.maintenance-supplier-row--active {
+    border-color: rgba(143, 231, 255, 0.8);
+    background: rgba(143, 231, 255, 0.1);
+}
+
+.maintenance-supplier-summary-btn {
+    width: 100%;
+    margin-top: 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+    text-align: left;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    color: #fff;
+    font-size: 12px;
+}
+
 .maintenance-expense-card,
 .maintenance-supplier-card {
     margin-top: 8px;
@@ -680,6 +777,156 @@ button:focus-visible {
     border: 1px solid rgba(255, 255, 255, 0.14);
     font-size: 12px;
     line-height: 1.35;
+}
+
+.maintenance-expense-row {
+    margin-top: 8px;
+    padding: 8px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.maintenance-expense-list-header {
+    margin-top: 8px;
+    padding: 6px 8px;
+    display: grid;
+    grid-template-columns: 110px 1fr 110px auto;
+    gap: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.2px;
+    opacity: 0.86;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.maintenance-expense-row--active {
+    border-color: rgba(143, 231, 255, 0.8);
+    background: rgba(143, 231, 255, 0.1);
+}
+
+.maintenance-expense-summary-btn {
+    width: 100%;
+    margin-top: 0;
+    display: grid;
+    grid-template-columns: 110px 1fr 110px auto;
+    gap: 8px;
+    text-align: left;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    color: #fff;
+    font-size: 12px;
+}
+
+.maintenance-expense-col {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.maintenance-expense-col--amount {
+    font-weight: 700;
+}
+
+#maintenanceExpenseDetailPanel {
+    display: none;
+    position: relative;
+    z-index: 2;
+    overflow: auto;
+    padding: 10px;
+    font-size: 12px;
+    line-height: 1.4;
+    background: #f4f7fb;
+    color: #1a2433;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+#maintenanceExpenseDetailPanel a {
+    color: #1f5fb8;
+    text-decoration: none;
+}
+
+#maintenanceExpenseDetailPanel a:hover {
+    text-decoration: underline;
+}
+
+.maintenance-detail-meta {
+    margin-top: 2px;
+}
+
+.maintenance-detail-empty {
+    width: 100%;
+    min-height: 120px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    opacity: 0.85;
+}
+
+.maintenance-detail-block {
+    margin-top: 10px;
+}
+
+.maintenance-doc-list {
+    margin-top: 6px;
+    display: grid;
+    gap: 6px;
+}
+
+.maintenance-doc-item {
+    border: 1px solid rgba(20, 30, 44, 0.16);
+    border-radius: 8px;
+    padding: 6px 8px;
+    background: #fff;
+}
+
+.maintenance-doc-preview {
+    margin-top: 4px;
+    border: 1px solid rgba(20, 30, 44, 0.12);
+    border-radius: 6px;
+    overflow: hidden;
+    background: #eef3fa;
+}
+
+.maintenance-doc-preview-image,
+.maintenance-doc-preview-pdf {
+    width: 100%;
+    height: 120px;
+    border: 0;
+    display: block;
+    object-fit: cover;
+    background: #fff;
+}
+
+.maintenance-doc-preview-fallback {
+    padding: 10px;
+    font-size: 11px;
+    color: #33435a;
+}
+
+.maintenance-doc-name {
+    font-weight: 700;
+    margin-bottom: 4px;
+    color: #182433;
+    word-break: break-word;
+}
+
+.maintenance-doc-actions {
+    display: flex;
+    gap: 10px;
+    font-size: 11px;
+}
+
+.maintenance-doc-remove-btn {
+    width: auto;
+    margin-top: 0;
+    padding: 2px 8px;
+    font-size: 11px;
+    border-radius: 8px;
 }
 
 .maintenance-expense-line {

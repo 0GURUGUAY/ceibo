@@ -4,10 +4,13 @@
     <title>Gestion du CEIBO</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <link rel="icon" type="image/jpeg" href="ceibo-favicon.jpg">
 
     <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
-    <link rel="stylesheet" href="style.css?v=20260305-1"/>
+    <link rel="stylesheet" href="style.css?v=20260305-10"/>
     <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
     <script src="https://unpkg.com/leaflet-image@0.4.0/leaflet-image.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
@@ -23,12 +26,11 @@
         <button id="cloudTabBtn" class="tab-btn active" type="button">Cloud</button>
         <button id="routesTabBtn" class="tab-btn" type="button">Routes</button>
         <button id="routingTabBtn" class="tab-btn" type="button">Routage</button>
-        <button id="navLogTabBtn" class="tab-btn" type="button">Journal nav</button>
-        <button id="engineTabBtn" class="tab-btn" type="button">Moteur</button>
         <button id="weatherTabBtn" class="tab-btn" type="button">Météo</button>
+        <button id="navLogTabBtn" class="tab-btn" type="button">Journal nav</button>
+        <button id="maintenanceTabBtn" class="tab-btn" type="button">Maintenance</button>
         <button id="arrivalTabBtn" class="tab-btn" type="button">Arrivée</button>
         <button id="waypointTabBtn" class="tab-btn" type="button">Waypoint</button>
-        <button id="maintenanceTabBtn" class="tab-btn" type="button">Maintenance</button>
     </div>
 
     <div id="routingTab" class="tab-panel">
@@ -225,25 +227,6 @@
         <div id="navLogList"></div>
     </div>
 
-    <div id="engineTab" class="tab-panel">
-        <label for="engineHoursInput" style="display:block; margin-top:10px; font-size:12px;">Compteur moteur (h):</label>
-        <input type="number" id="engineHoursInput" step="0.1" placeholder="Ex: 1250.4" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
-
-        <label for="fuelAddedInput" style="display:block; margin-top:10px; font-size:12px;">Carburant ajouté (L):</label>
-        <input type="number" id="fuelAddedInput" step="0.1" placeholder="Ex: 35" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
-
-        <label for="engineLogNoteInput" style="display:block; margin-top:10px; font-size:12px;">Note:</label>
-        <textarea id="engineLogNoteInput" rows="3" placeholder="Maintenance, bruit, filtre, etc." style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;"></textarea>
-
-        <div class="button-row">
-            <button id="saveEngineLogBtn" style="flex:1;">Ajouter entrée moteur</button>
-            <button id="clearEngineLogBtn" style="flex:1;">Effacer livre moteur</button>
-        </div>
-
-        <label style="display:block; margin-top:12px; font-size:12px;">Historique moteur:</label>
-        <div id="engineLogList"></div>
-    </div>
-
     <div id="weatherTab" class="tab-panel">
         <div class="button-row">
             <button id="placeWeatherPointerBtn" style="flex:1;">Placer pointeur météo</button>
@@ -371,6 +354,7 @@
             <button id="maintenanceTasksSubtabBtn" type="button" class="maintenance-subtab-btn active">Tâches</button>
             <button id="maintenanceExpensesSubtabBtn" type="button" class="maintenance-subtab-btn">Dépenses & factures</button>
             <button id="maintenanceSuppliersSubtabBtn" type="button" class="maintenance-subtab-btn">Fournisseurs</button>
+            <button id="maintenanceEngineSubtabBtn" type="button" class="maintenance-subtab-btn">Moteur</button>
         </div>
 
         <div id="maintenanceTasksPanel" class="maintenance-subpanel active">
@@ -423,130 +407,121 @@
         </div>
 
         <div id="maintenanceExpensesPanel" class="maintenance-subpanel">
-            <label for="maintenanceInvoiceInput" style="display:block; margin-top:10px; font-size:12px;">Uploader facture (image):</label>
-            <input type="file" id="maintenanceInvoiceInput" accept="image/*,.pdf" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
-            <div class="button-row">
-                <button id="maintenanceScanInvoiceBtn" style="flex:1;">Scanner facture</button>
+            <div class="maintenance-subtabs maintenance-expense-subtabs">
+                <button id="maintenanceExpenseListTabBtn" type="button" class="maintenance-subtab-btn active">Liste factures</button>
+                <button id="maintenanceExpenseAddTabBtn" type="button" class="maintenance-subtab-btn">Ajouter facture</button>
             </div>
-            <div id="maintenanceInvoiceScanStatus" style="margin-top:6px; font-size:12px; opacity:0.9;">Scan facture: en attente</div>
-            <label id="maintenanceSupplierSuggestionsLabel" style="display:none; margin-top:8px; font-size:12px;">Suggestions fournisseur:</label>
-            <div id="maintenanceSupplierSuggestions" class="maintenance-supplier-suggestions" style="display:none;"></div>
 
-            <div id="maintenanceInvoiceReviewPanel" style="margin-top:8px; display:none; border:1px solid rgba(255,255,255,0.2); border-radius:8px; padding:8px;">
-                <label id="maintenanceInvoiceReviewTitle" style="display:block; font-size:12px; margin-bottom:6px;">Copie rapide depuis l'aperçu PDF</label>
-                <div id="maintenanceInvoiceReviewHint" style="font-size:12px; opacity:0.9; margin-bottom:6px;">1) Sélectionne du texte dans l’aperçu à droite 2) copie (⌘C) 3) colle dans le champ choisi.</div>
-                <label for="maintenanceManualPasteTargetSelect" style="display:block; margin-top:6px; font-size:12px;">Champ de destination:</label>
-                <select id="maintenanceManualPasteTargetSelect" style="width:100%; padding:8px; box-sizing:border-box;"></select>
+            <div id="maintenanceExpenseListPanel" class="maintenance-expense-subpanel active">
+                <label id="maintenanceExpensesListLabel" style="display:block; margin-top:12px; font-size:12px;">Dépenses:</label>
+                <div id="maintenanceExpensesList"></div>
+            </div>
+
+            <div id="maintenanceExpenseAddPanel" class="maintenance-expense-subpanel">
+                <label for="maintenanceInvoiceInput" style="display:block; margin-top:10px; font-size:12px;">Uploader facture/documents (images/PDF):</label>
+                <input type="file" id="maintenanceInvoiceInput" accept="image/*,.pdf" multiple style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
                 <div class="button-row">
-                    <button id="maintenancePasteSelectedTextBtn" style="flex:1;">Coller texte copié dans ce champ</button>
+                    <button id="maintenanceScanInvoiceBtn" style="flex:1;">Scanner facture</button>
+                </div>
+                <div id="maintenanceInvoiceScanStatus" style="margin-top:6px; font-size:12px; opacity:0.9;">Scan facture: en attente</div>
+                <label id="maintenanceSupplierSuggestionsLabel" style="display:none; margin-top:8px; font-size:12px;">Suggestions fournisseur:</label>
+                <div id="maintenanceSupplierSuggestions" class="maintenance-supplier-suggestions" style="display:none;"></div>
+
+                <div id="maintenanceInvoiceReviewPanel" style="margin-top:8px; display:none; border:1px solid rgba(255,255,255,0.2); border-radius:8px; padding:8px;">
+                    <label id="maintenanceInvoiceReviewTitle" style="display:block; font-size:12px; margin-bottom:6px;">Copie rapide depuis l'aperçu PDF</label>
+                    <div id="maintenanceInvoiceReviewHint" style="font-size:12px; opacity:0.9; margin-bottom:6px;">1) Sélectionne du texte dans l’aperçu à droite 2) copie (⌘C) 3) colle dans le champ choisi.</div>
+                    <label for="maintenanceManualPasteTargetSelect" style="display:block; margin-top:6px; font-size:12px;">Champ de destination:</label>
+                    <select id="maintenanceManualPasteTargetSelect" style="width:100%; padding:8px; box-sizing:border-box;"></select>
+                    <div class="button-row">
+                        <button id="maintenancePasteSelectedTextBtn" style="flex:1;">Coller texte copié dans ce champ</button>
+                    </div>
                 </div>
 
-                <label id="maintenanceAltLlmTitle" style="display:block; font-size:12px; margin-top:10px;">Analyse IA alternative</label>
-                <label for="maintenanceLlmProviderSelect" style="display:block; margin-top:6px; font-size:12px;">Provider:</label>
-                <select id="maintenanceLlmProviderSelect" style="width:100%; padding:8px; box-sizing:border-box;">
-                    <option value="">Désactivé</option>
-                    <option value="openai">OpenAI</option>
-                    <option value="anthropic">Anthropic</option>
-                </select>
-                <label for="maintenanceLlmApiKeyInput" style="display:block; margin-top:6px; font-size:12px;">API key:</label>
-                <input type="password" id="maintenanceLlmApiKeyInput" placeholder="sk-... / anthropic key" style="width:100%; padding:8px; box-sizing:border-box;">
-                <label for="maintenanceLlmModelInput" style="display:block; margin-top:6px; font-size:12px;">Model:</label>
-                <input type="text" id="maintenanceLlmModelInput" placeholder="gpt-4o-mini / claude-3-5-haiku-latest" style="width:100%; padding:8px; box-sizing:border-box;">
+                <div class="maintenance-expense-grid">
+                    <div class="maintenance-control-item">
+                        <label for="maintenanceExpenseDateInput">Date:</label>
+                        <input type="date" id="maintenanceExpenseDateInput" style="width:100%; padding:8px; box-sizing:border-box;">
+                    </div>
+                    <div class="maintenance-control-item">
+                        <label for="maintenanceExpenseTotalInput">Montant total:</label>
+                        <input type="number" id="maintenanceExpenseTotalInput" step="0.01" min="0" placeholder="0.00" style="width:100%; padding:8px; box-sizing:border-box;">
+                    </div>
+                    <div class="maintenance-control-item">
+                        <label for="maintenanceExpenseCurrencyInput">Devise:</label>
+                        <input type="text" id="maintenanceExpenseCurrencyInput" value="EUR" maxlength="5" style="width:100%; padding:8px; box-sizing:border-box;">
+                    </div>
+                    <div class="maintenance-control-item">
+                        <label for="maintenanceExpensePayerSelect">Qui paye:</label>
+                        <select id="maintenanceExpensePayerSelect">
+                            <option value="PATISSIER">PATISSIER</option>
+                            <option value="KLENIK">KLENIK</option>
+                        </select>
+                    </div>
+                    <div class="maintenance-control-item">
+                        <label for="maintenanceExpensePaymentStatusSelect">État paiement:</label>
+                        <select id="maintenanceExpensePaymentStatusSelect">
+                            <option value="new">Nouvelle / à payer</option>
+                            <option value="pending">À payer</option>
+                            <option value="planned">À prévoir</option>
+                            <option value="paid">Payé</option>
+                        </select>
+                    </div>
+                    <div class="maintenance-control-item">
+                        <label for="maintenanceExpenseSupplierInput">Fournisseur:</label>
+                        <input type="text" id="maintenanceExpenseSupplierInput" placeholder="Nom fournisseur" style="width:100%; padding:8px; box-sizing:border-box;">
+                    </div>
+                    <div class="maintenance-control-item" style="grid-column: span 2;">
+                        <label for="maintenanceExpenseSupplierIbanInput">IBAN fournisseur:</label>
+                        <input type="text" id="maintenanceExpenseSupplierIbanInput" placeholder="Ex: FR76..." style="width:100%; padding:8px; box-sizing:border-box;">
+                    </div>
+                </div>
+
+                <label for="maintenanceExpenseLinesInput" style="display:block; margin-top:10px; font-size:12px;">Lignes de travaux/produits (une ligne = libellé ; quantité ; prix ; total):</label>
+                <textarea id="maintenanceExpenseLinesInput" rows="4" placeholder="Pompe eau ; 1 ; 280 ; 280" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;"></textarea>
+
+                <label for="maintenanceExpenseNoteInput" style="display:block; margin-top:10px; font-size:12px;">Note:</label>
+                <textarea id="maintenanceExpenseNoteInput" rows="2" placeholder="Détails / observations" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;"></textarea>
+
+                <label for="maintenanceExpenseAiCommentInput" style="display:block; margin-top:10px; font-size:12px;">Commentaire facture:</label>
+                <textarea id="maintenanceExpenseAiCommentInput" rows="4" placeholder="Observations sur la facture" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;"></textarea>
+
                 <div class="button-row">
-                    <button id="maintenanceTestAltLlmBtn" style="flex:1;">Tester connexion API</button>
-                    <button id="maintenanceRunAltLlmBtn" style="flex:1;">Analyser avec IA</button>
+                    <button id="maintenanceAddExpenseBtn" style="flex:1;">Ajouter dépense</button>
                 </div>
             </div>
-
-            <div class="maintenance-expense-grid">
-                <div class="maintenance-control-item">
-                    <label for="maintenanceExpenseDateInput">Date:</label>
-                    <input type="date" id="maintenanceExpenseDateInput" style="width:100%; padding:8px; box-sizing:border-box;">
-                </div>
-                <div class="maintenance-control-item">
-                    <label for="maintenanceExpenseTotalInput">Montant total:</label>
-                    <input type="number" id="maintenanceExpenseTotalInput" step="0.01" min="0" placeholder="0.00" style="width:100%; padding:8px; box-sizing:border-box;">
-                </div>
-                <div class="maintenance-control-item">
-                    <label for="maintenanceExpenseCurrencyInput">Devise:</label>
-                    <input type="text" id="maintenanceExpenseCurrencyInput" value="EUR" maxlength="5" style="width:100%; padding:8px; box-sizing:border-box;">
-                </div>
-                <div class="maintenance-control-item">
-                    <label for="maintenanceExpensePayerSelect">Qui paye:</label>
-                    <select id="maintenanceExpensePayerSelect">
-                        <option value="PATISSIER">PATISSIER</option>
-                        <option value="KLENIK">KLENIK</option>
-                    </select>
-                </div>
-                <div class="maintenance-control-item">
-                    <label for="maintenanceExpensePaymentStatusSelect">État paiement:</label>
-                    <select id="maintenanceExpensePaymentStatusSelect">
-                        <option value="pending">À payer</option>
-                        <option value="partial">Partiel</option>
-                        <option value="paid">Payé</option>
-                    </select>
-                </div>
-                <div class="maintenance-control-item">
-                    <label for="maintenanceExpenseSupplierInput">Fournisseur:</label>
-                    <input type="text" id="maintenanceExpenseSupplierInput" placeholder="Nom fournisseur" style="width:100%; padding:8px; box-sizing:border-box;">
-                </div>
-                <div class="maintenance-control-item" style="grid-column: span 2;">
-                    <label for="maintenanceExpenseSupplierIbanInput">IBAN fournisseur:</label>
-                    <input type="text" id="maintenanceExpenseSupplierIbanInput" placeholder="Ex: FR76..." style="width:100%; padding:8px; box-sizing:border-box;">
-                </div>
-            </div>
-
-            <label for="maintenanceExpenseLinesInput" style="display:block; margin-top:10px; font-size:12px;">Lignes de travaux/produits (une ligne = libellé ; quantité ; prix ; total):</label>
-            <textarea id="maintenanceExpenseLinesInput" rows="4" placeholder="Pompe eau ; 1 ; 280 ; 280" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;"></textarea>
-
-            <label for="maintenanceExpenseNoteInput" style="display:block; margin-top:10px; font-size:12px;">Note:</label>
-            <textarea id="maintenanceExpenseNoteInput" rows="2" placeholder="Détails / observations" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;"></textarea>
-
-            <label for="maintenanceExpenseAiCommentInput" style="display:block; margin-top:10px; font-size:12px;">Commentaire IA:</label>
-            <textarea id="maintenanceExpenseAiCommentInput" rows="4" placeholder="Analyse automatique du scan" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;"></textarea>
-
-            <div class="button-row">
-                <button id="maintenanceAddExpenseBtn" style="flex:1;">Ajouter dépense</button>
-            </div>
-
-            <label id="maintenanceExpensesListLabel" style="display:block; margin-top:12px; font-size:12px;">Dépenses:</label>
-            <div id="maintenanceExpensesList"></div>
         </div>
 
         <div id="maintenanceSuppliersPanel" class="maintenance-subpanel">
-            <div class="maintenance-expense-grid">
-                <div class="maintenance-control-item">
-                    <label for="maintenanceSupplierNameInput">Nom fournisseur:</label>
-                    <input type="text" id="maintenanceSupplierNameInput" placeholder="Ex: Nautic Parts" style="width:100%; padding:8px; box-sizing:border-box;">
-                </div>
-                <div class="maintenance-control-item">
-                    <label for="maintenanceSupplierContactInput">Contact:</label>
-                    <input type="text" id="maintenanceSupplierContactInput" placeholder="Nom contact" style="width:100%; padding:8px; box-sizing:border-box;">
-                </div>
-                <div class="maintenance-control-item">
-                    <label for="maintenanceSupplierPhoneInput">Téléphone urgence:</label>
-                    <input type="text" id="maintenanceSupplierPhoneInput" placeholder="+34 ..." style="width:100%; padding:8px; box-sizing:border-box;">
-                </div>
-                <div class="maintenance-control-item">
-                    <label for="maintenanceSupplierIbanInput">IBAN:</label>
-                    <input type="text" id="maintenanceSupplierIbanInput" placeholder="FR76..." style="width:100%; padding:8px; box-sizing:border-box;">
-                </div>
+            <label id="maintenanceSuppliersListLabel" style="display:block; margin-top:12px; font-size:12px;">Fournisseurs:</label>
+            <div class="button-row">
+                <button id="maintenanceSupplierNewBtn" style="flex:1;">Nouveau fournisseur</button>
             </div>
+            <div id="maintenanceSuppliersList"></div>
+        </div>
 
-            <label for="maintenanceSupplierNoteInput" style="display:block; margin-top:10px; font-size:12px;">Note:</label>
-            <textarea id="maintenanceSupplierNoteInput" rows="2" placeholder="Infos utiles" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;"></textarea>
+        <div id="engineTab" class="maintenance-subpanel">
+            <label for="engineHoursInput" style="display:block; margin-top:10px; font-size:12px;">Compteur moteur (h):</label>
+            <input type="number" id="engineHoursInput" step="0.1" placeholder="Ex: 1250.4" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
+
+            <label for="fuelAddedInput" style="display:block; margin-top:10px; font-size:12px;">Carburant ajouté (L):</label>
+            <input type="number" id="fuelAddedInput" step="0.1" placeholder="Ex: 35" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
+
+            <label for="engineLogNoteInput" style="display:block; margin-top:10px; font-size:12px;">Note:</label>
+            <textarea id="engineLogNoteInput" rows="3" placeholder="Maintenance, bruit, filtre, etc." style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;"></textarea>
 
             <div class="button-row">
-                <button id="maintenanceAddSupplierBtn" style="flex:1;">Ajouter fournisseur</button>
+                <button id="saveEngineLogBtn" style="flex:1;">Ajouter entrée moteur</button>
+                <button id="clearEngineLogBtn" style="flex:1;">Effacer livre moteur</button>
             </div>
 
-            <label id="maintenanceSuppliersListLabel" style="display:block; margin-top:12px; font-size:12px;">Fournisseurs:</label>
-            <div id="maintenanceSuppliersList"></div>
+            <label style="display:block; margin-top:12px; font-size:12px;">Historique moteur:</label>
+            <div id="engineLogList"></div>
         </div>
     </div>
 
     <div class="sidebar-footer">
         <span class="creator-credit">Programa creado por Max Patissier</span>
+        <span id="buildVersionBadge" class="build-version-badge">v20260305-18</span>
         <div class="lang-switch" aria-label="Sélecteur de langue">
             <button id="langFrBtn" class="lang-btn" type="button">FR</button>
             <button id="langEsBtn" class="lang-btn" type="button">ES</button>
@@ -566,6 +541,7 @@
 <div id="maintenanceInvoicePreviewPanel" style="display:none;">
     <div class="maintenance-invoice-preview-shell">
         <div id="maintenanceInvoicePreviewTitle" class="maintenance-canvas-placeholder" style="display:none; justify-content:flex-start; align-items:center; min-height:auto; padding:8px 10px;">Aperçu facture</div>
+        <div id="maintenanceExpenseDetailPanel" style="display:none;"></div>
         <img id="maintenanceInvoicePreviewImage" alt="Aperçu facture" style="display:none; width:100%; height:100%; object-fit:contain;">
         <div id="maintenanceInvoicePreviewPdfContainer" style="display:none;"></div>
         <div id="maintenanceInvoicePreviewPlaceholder" class="maintenance-canvas-placeholder">Charge une facture pour afficher l’aperçu</div>
@@ -582,7 +558,7 @@
     </div>
 </div>
 
-<script type="module" src="app.js?v=20260305-1"></script>
+<script type="module" src="app.js?v=20260305-18"></script>
 
 </body>
 </html>

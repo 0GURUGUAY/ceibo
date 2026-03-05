@@ -2,6 +2,8 @@ import { routeSegment, distanceNm, getBearing, computeTWA, movePoint } from './p
 import { feature as topojsonFeature } from 'https://cdn.jsdelivr.net/npm/topojson-client@3/+esm';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
+const APP_BUILD_VERSION = '20260305-18';
+
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
     iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
@@ -109,6 +111,13 @@ let maintenancePdfJsLoader = null;
 let maintenanceInvoicePreviewUrl = '';
 let maintenanceInvoicePreviewType = '';
 let maintenanceLastScannedText = '';
+let selectedMaintenanceExpenseId = null;
+let selectedMaintenanceSupplierId = null;
+let activeMaintenanceExpensesView = 'list';
+let maintenanceExpensesCloudDirty = false;
+let maintenanceExpensesSyncInFlight = false;
+let maintenanceExpensesLastLocalMutationAt = 0;
+let maintenanceExpensesLocalStorageFailed = false;
 let protectedDataLoaded = false;
 let overpassLastRequestAt = 0;
 const overpassQueryCache = new Map();
@@ -122,10 +131,6 @@ const OWM_TILE_APPID_STORAGE_KEY = 'ceiboOwmTileAppId';
 const MAINTENANCE_BOARDS_STORAGE_KEY = 'ceiboMaintenanceBoardsV1';
 const MAINTENANCE_EXPENSES_STORAGE_KEY = 'ceiboMaintenanceExpensesV1';
 const MAINTENANCE_SUPPLIERS_STORAGE_KEY = 'ceiboMaintenanceSuppliersV1';
-const MAINTENANCE_LLM_PROVIDER_STORAGE_KEY = 'ceiboMaintenanceLlmProviderV1';
-const MAINTENANCE_LLM_MODEL_STORAGE_KEY = 'ceiboMaintenanceLlmModelV1';
-const MAINTENANCE_LLM_API_KEY_STORAGE_KEY = 'ceiboMaintenanceLlmApiKeyV1';
-const ANTHROPIC_PROXY_FUNCTION_NAME = 'anthropic-proxy';
 const MAINTENANCE_COLOR_ORDER = ['red', 'orange', 'green', 'blue'];
 const MAINTENANCE_TASK_STATUS_ORDER = ['active', 'planned', 'done'];
 const MAINTENANCE_COLORS = {
@@ -252,7 +257,6 @@ function applyLanguageToUi() {
     setElementText('#routesTabBtn', t('Routes', 'Rutas'));
     setElementText('#routingTabBtn', t('Routage', 'Navegación'));
     setElementText('#navLogTabBtn', t('Journal nav', 'Diario nav'));
-    setElementText('#engineTabBtn', t('Moteur', 'Motor'));
     setElementText('#weatherTabBtn', t('Météo', 'Meteo'));
     setElementText('#arrivalTabBtn', t('Arrivée', 'Llegada'));
     setElementText('#waypointTabBtn', t('Waypoint', 'Waypoint'));
@@ -411,6 +415,7 @@ function applyLanguageToUi() {
     setElementText('#maintenanceTasksSubtabBtn', t('Tâches', 'Tareas'));
     setElementText('#maintenanceExpensesSubtabBtn', t('Dépenses & factures', 'Gastos y facturas'));
     setElementText('#maintenanceSuppliersSubtabBtn', t('Fournisseurs', 'Proveedores'));
+    setElementText('#maintenanceEngineSubtabBtn', t('Moteur', 'Motor'));
     setElementText('label[for="maintenanceSchemaInput"]', t('Importer schéma (image):', 'Importar esquema (imagen):'));
     setElementText('#maintenanceToggleSchemaManagerBtn', t('Gérer les schémas', 'Gestionar esquemas'));
     setElementText('#maintenanceAddSchemaBtn', t('Ajouter schéma', 'Añadir esquema'));
@@ -429,7 +434,9 @@ function applyLanguageToUi() {
     setElementPlaceholder('#maintenanceLegendInput', t('Ex: Changer turbine pompe eau', 'Ej: Cambiar impulsor bomba agua'));
     setElementText('#maintenanceCanvasPlaceholder', t('Aucun schéma sélectionné', 'Ningún esquema seleccionado'));
     setElementText('#maintenanceLegendListLabel', t('Tâches par schéma:', 'Tareas por esquema:'));
-    setElementText('label[for="maintenanceInvoiceInput"]', t('Uploader facture (image/PDF):', 'Subir factura (imagen/PDF):'));
+    setElementText('label[for="maintenanceInvoiceInput"]', t('Uploader facture/documents (images/PDF):', 'Subir factura/documentos (imágenes/PDF):'));
+    setElementText('#maintenanceExpenseListTabBtn', t('Liste factures', 'Lista facturas'));
+    setElementText('#maintenanceExpenseAddTabBtn', t('Ajouter facture', 'Añadir factura'));
     setElementText('#maintenanceScanInvoiceBtn', t('Scanner facture', 'Escanear factura'));
     setElementText('#maintenanceInvoiceScanStatus', t('Scan facture: en attente', 'Escaneo factura: en espera'));
     setElementText('#maintenanceSupplierSuggestionsLabel', t('Suggestions fournisseur:', 'Sugerencias proveedor:'));
@@ -437,15 +444,6 @@ function applyLanguageToUi() {
     setElementText('#maintenanceInvoiceReviewHint', t('1) Sélectionne du texte dans l’aperçu à droite 2) copie (⌘C) 3) colle dans le champ choisi.', '1) Selecciona texto en la vista previa derecha 2) copia (⌘C) 3) pega en el campo elegido.'));
     setElementText('label[for="maintenanceManualPasteTargetSelect"]', t('Champ de destination:', 'Campo de destino:'));
     setElementText('#maintenancePasteSelectedTextBtn', t('Coller texte copié dans ce champ', 'Pegar texto copiado en este campo'));
-    setElementText('#maintenanceAltLlmTitle', t('Analyse IA alternative', 'Análisis IA alternativo'));
-    setElementText('label[for="maintenanceLlmProviderSelect"]', t('Provider:', 'Proveedor:'));
-    setElementText('#maintenanceLlmProviderSelect option[value=""]', t('Désactivé', 'Desactivado'));
-    setElementText('#maintenanceLlmProviderSelect option[value="anthropic"]', t('Anthropic (proxy requis)', 'Anthropic (proxy requerido)'));
-    setElementText('label[for="maintenanceLlmApiKeyInput"]', t('API key:', 'Clave API:'));
-    setElementText('label[for="maintenanceLlmModelInput"]', t('Model:', 'Modelo:'));
-    setElementPlaceholder('#maintenanceLlmModelInput', t('gpt-4o-mini / claude-3-5-haiku-latest', 'gpt-4o-mini / claude-3-5-haiku-latest'));
-    setElementText('#maintenanceTestAltLlmBtn', t('Tester connexion API', 'Probar conexión API'));
-    setElementText('#maintenanceRunAltLlmBtn', t('Analyser avec IA', 'Analizar con IA'));
     setElementText('#maintenanceInvoicePreviewTitle', t('Aperçu facture', 'Vista previa factura'));
     setElementText('#maintenanceInvoicePreviewPlaceholder', t('Charge une facture pour afficher l’aperçu', 'Carga una factura para mostrar la vista previa'));
     const manualPasteTargetSelect = document.getElementById('maintenanceManualPasteTargetSelect');
@@ -459,7 +457,7 @@ function applyLanguageToUi() {
             { value: 'supplierEmailToNote', label: t('Email contact (note fournisseur)', 'Email contacto (nota proveedor)') },
             { value: 'expenseIban', label: t('IBAN fournisseur', 'IBAN proveedor') },
             { value: 'expenseAmount', label: t('Montant total', 'Importe total') },
-            { value: 'expenseAiComment', label: t('Commentaire IA', 'Comentario IA') },
+            { value: 'expenseAiComment', label: t('Commentaire facture', 'Comentario factura') },
             { value: 'expenseNote', label: t('Note dépense', 'Nota gasto') }
         ];
         options.forEach(item => {
@@ -477,15 +475,16 @@ function applyLanguageToUi() {
     setElementText('label[for="maintenanceExpenseCurrencyInput"]', t('Devise:', 'Moneda:'));
     setElementText('label[for="maintenanceExpensePayerSelect"]', t('Qui paye:', 'Quién paga:'));
     setElementText('label[for="maintenanceExpensePaymentStatusSelect"]', t('État paiement:', 'Estado pago:'));
+    setElementText('#maintenanceExpensePaymentStatusSelect option[value="new"]', t('Nouvelle / à payer', 'Nueva / pendiente'));
     setElementText('#maintenanceExpensePaymentStatusSelect option[value="pending"]', t('À payer', 'Pendiente'));
-    setElementText('#maintenanceExpensePaymentStatusSelect option[value="partial"]', t('Partiel', 'Parcial'));
+    setElementText('#maintenanceExpensePaymentStatusSelect option[value="planned"]', t('À prévoir', 'A prever'));
     setElementText('#maintenanceExpensePaymentStatusSelect option[value="paid"]', t('Payé', 'Pagado'));
     setElementText('label[for="maintenanceExpenseSupplierInput"]', t('Fournisseur:', 'Proveedor:'));
     setElementText('label[for="maintenanceExpenseSupplierIbanInput"]', t('IBAN fournisseur:', 'IBAN proveedor:'));
     setElementText('label[for="maintenanceExpenseLinesInput"]', t('Lignes de travaux/produits (une ligne = libellé ; quantité ; prix ; total):', 'Líneas de trabajos/productos (una línea = concepto ; cantidad ; precio ; total):'));
     setElementText('label[for="maintenanceExpenseNoteInput"]', t('Note:', 'Nota:'));
-    setElementText('label[for="maintenanceExpenseAiCommentInput"]', t('Commentaire IA:', 'Comentario IA:'));
-    setElementPlaceholder('#maintenanceExpenseAiCommentInput', t('Analyse automatique du scan', 'Análisis automático del escaneo'));
+    setElementText('label[for="maintenanceExpenseAiCommentInput"]', t('Commentaire facture:', 'Comentario factura:'));
+    setElementPlaceholder('#maintenanceExpenseAiCommentInput', t('Observations sur la facture', 'Observaciones sobre la factura'));
     setElementText('#maintenanceAddExpenseBtn', t('Ajouter dépense', 'Añadir gasto'));
     setElementText('#maintenanceExpensesListLabel', t('Dépenses:', 'Gastos:'));
     setElementText('label[for="maintenanceSupplierNameInput"]', t('Nom fournisseur:', 'Nombre proveedor:'));
@@ -493,7 +492,9 @@ function applyLanguageToUi() {
     setElementText('label[for="maintenanceSupplierPhoneInput"]', t('Téléphone urgence:', 'Teléfono urgencia:'));
     setElementText('label[for="maintenanceSupplierIbanInput"]', t('IBAN:', 'IBAN:'));
     setElementText('label[for="maintenanceSupplierNoteInput"]', t('Note:', 'Nota:'));
+    setElementText('#maintenanceSupplierNewBtn', t('Nouveau fournisseur', 'Nuevo proveedor'));
     setElementText('#maintenanceAddSupplierBtn', t('Ajouter fournisseur', 'Añadir proveedor'));
+    setElementText('#maintenanceUpdateSupplierBtn', t('Mettre à jour fournisseur', 'Actualizar proveedor'));
     setElementText('#maintenanceSuppliersListLabel', t('Fournisseurs:', 'Proveedores:'));
 
     const creator = document.querySelector('.creator-credit');
@@ -581,7 +582,6 @@ function setProtectedTabsEnabled(enabled) {
         'routesTabBtn',
         'routingTabBtn',
         'navLogTabBtn',
-        'engineTabBtn',
         'weatherTabBtn',
         'arrivalTabBtn',
         'waypointTabBtn',
@@ -666,7 +666,7 @@ async function applyAuthGateState({ clearWhenLocked = true } = {}) {
 
     if (isCloudReady()) {
         try {
-            const routes = await pullRoutesFromCloud();
+            const routes = await pullRoutesFromCloud({ allowMaintenanceOverwrite: false });
             refreshSavedList();
             setCloudStatus(t(`Cloud connecté · ${routes.length} route(s) partagée(s)`, `Nube conectada · ${routes.length} ruta(s) compartida(s)`));
             updateCloudDataSourceStatus('cloud', routes.length, waypointPhotoEntries.length);
@@ -3775,6 +3775,21 @@ function parseExpenseLinesText(raw) {
         });
 }
 
+function sanitizeMaintenanceInvoiceDocument(entry, fallbackIndex = 0) {
+    const name = String(entry?.name || entry?.invoiceName || '').trim();
+    const dataUrl = String(entry?.dataUrl || entry?.invoiceDataUrl || '');
+    const mimeType = String(entry?.mimeType || entry?.invoiceMimeType || '').trim().toLowerCase();
+    const sizeBytes = Math.max(0, Number(entry?.sizeBytes || entry?.invoiceSizeBytes || 0) || 0);
+
+    return {
+        id: String(entry?.id || `expense-doc-${Date.now()}-${fallbackIndex}`),
+        name,
+        dataUrl,
+        mimeType,
+        sizeBytes
+    };
+}
+
 function sanitizeMaintenanceExpense(entry, fallbackIndex = 0) {
     const rawLines = Array.isArray(entry?.lines) ? entry.lines : [];
     const lines = rawLines
@@ -3787,19 +3802,45 @@ function sanitizeMaintenanceExpense(entry, fallbackIndex = 0) {
         }))
         .filter(line => line.label);
 
+    const rawDocuments = Array.isArray(entry?.invoiceDocuments) ? entry.invoiceDocuments : [];
+    let invoiceDocuments = rawDocuments
+        .map((doc, docIndex) => sanitizeMaintenanceInvoiceDocument(doc, docIndex))
+        .filter(doc => doc.dataUrl);
+
+    if (!invoiceDocuments.length && entry?.invoiceDataUrl) {
+        invoiceDocuments = [sanitizeMaintenanceInvoiceDocument({
+            id: `expense-doc-legacy-${Date.now()}-${fallbackIndex}`,
+            name: entry?.invoiceName || 'facture',
+            dataUrl: entry?.invoiceDataUrl,
+            mimeType: entry?.invoiceMimeType,
+            sizeBytes: entry?.invoiceSizeBytes
+        }, 0)];
+    }
+
+    const primaryInvoice = invoiceDocuments[0] || null;
+
     return {
         id: String(entry?.id || `expense-${Date.now()}-${fallbackIndex}`),
-        invoiceName: String(entry?.invoiceName || '').trim(),
+        invoiceName: String(entry?.invoiceName || primaryInvoice?.name || '').trim(),
+        invoiceDataUrl: String(entry?.invoiceDataUrl || primaryInvoice?.dataUrl || ''),
+        invoiceMimeType: String(entry?.invoiceMimeType || primaryInvoice?.mimeType || '').trim(),
+        invoiceSizeBytes: Math.max(0, Number(entry?.invoiceSizeBytes || primaryInvoice?.sizeBytes || 0) || 0),
+        invoiceDocuments,
         date: String(entry?.date || new Date().toISOString().slice(0, 10)),
         supplierName: String(entry?.supplierName || '').trim(),
         supplierIban: String(entry?.supplierIban || '').trim(),
         payer: String(entry?.payer || 'PATISSIER').toUpperCase() === 'KLENIK' ? 'KLENIK' : 'PATISSIER',
-        paymentStatus: ['pending', 'partial', 'paid'].includes(String(entry?.paymentStatus || 'pending')) ? String(entry?.paymentStatus) : 'pending',
+        paymentStatus: (() => {
+            const rawStatus = String(entry?.paymentStatus || 'pending');
+            if (rawStatus === 'partial') return 'planned';
+            return ['new', 'pending', 'planned', 'paid'].includes(rawStatus) ? rawStatus : 'pending';
+        })(),
         totalAmount: toFiniteAmount(entry?.totalAmount),
         currency: String(entry?.currency || 'EUR').trim().toUpperCase() || 'EUR',
         lines,
         note: String(entry?.note || '').trim(),
         aiComment: String(entry?.aiComment || '').trim(),
+        postComment: String(entry?.postComment || '').trim(),
         scannedText: String(entry?.scannedText || ''),
         createdAt: String(entry?.createdAt || new Date().toISOString()),
         updatedAt: String(entry?.updatedAt || new Date().toISOString())
@@ -3807,6 +3848,11 @@ function sanitizeMaintenanceExpense(entry, fallbackIndex = 0) {
 }
 
 function sanitizeMaintenanceSupplier(entry, fallbackIndex = 0) {
+    const rawDocuments = Array.isArray(entry?.documents) ? entry.documents : [];
+    const documents = rawDocuments
+        .map((doc, docIndex) => sanitizeMaintenanceInvoiceDocument(doc, docIndex))
+        .filter(doc => doc.dataUrl);
+
     return {
         id: String(entry?.id || `supplier-${Date.now()}-${fallbackIndex}`),
         name: String(entry?.name || '').trim(),
@@ -3814,6 +3860,7 @@ function sanitizeMaintenanceSupplier(entry, fallbackIndex = 0) {
         emergencyPhone: String(entry?.emergencyPhone || '').trim(),
         iban: String(entry?.iban || '').trim(),
         note: String(entry?.note || '').trim(),
+        documents,
         createdAt: String(entry?.createdAt || new Date().toISOString()),
         updatedAt: String(entry?.updatedAt || new Date().toISOString())
     };
@@ -3828,6 +3875,10 @@ function setMaintenanceExpenses(list, { persistLocal = true, refreshUi = true, s
         .map((entry, index) => sanitizeMaintenanceExpense(entry, index))
         .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
 
+    if (selectedMaintenanceExpenseId && !maintenanceExpenses.some(item => item.id === selectedMaintenanceExpenseId)) {
+        selectedMaintenanceExpenseId = null;
+    }
+
     if (persistLocal) {
         saveArrayToStorage(MAINTENANCE_EXPENSES_STORAGE_KEY, maintenanceExpenses);
     }
@@ -3840,10 +3891,73 @@ function setMaintenanceExpenses(list, { persistLocal = true, refreshUi = true, s
 }
 
 function persistMaintenanceExpenses({ syncCloud = true } = {}) {
-    saveArrayToStorage(MAINTENANCE_EXPENSES_STORAGE_KEY, maintenanceExpenses);
-    if (syncCloud && isCloudReady()) {
-        pushRoutesToCloud().catch(() => null);
+    maintenanceExpensesCloudDirty = true;
+    maintenanceExpensesLastLocalMutationAt = Date.now();
+
+    try {
+        saveArrayToStorage(MAINTENANCE_EXPENSES_STORAGE_KEY, maintenanceExpenses);
+        maintenanceExpensesLocalStorageFailed = false;
+    } catch (_error) {
+        maintenanceExpensesLocalStorageFailed = true;
+        setCloudStatus(t('Sauvegarde locale dépenses impossible (stockage saturé).', 'Guardado local de gastos imposible (almacenamiento lleno).'), true);
+        return;
     }
+
+    if (syncCloud && isCloudReady()) {
+        const mutationStamp = maintenanceExpensesLastLocalMutationAt;
+        maintenanceExpensesSyncInFlight = true;
+        pushRoutesToCloud()
+            .then(() => {
+                if (maintenanceExpensesLastLocalMutationAt === mutationStamp) {
+                    maintenanceExpensesCloudDirty = false;
+                }
+            })
+            .catch(() => {
+                setCloudStatus(t('Synchro cloud dépenses en échec: les données locales sont conservées.', 'Fallo sincronización nube gastos: se conservan los datos locales.'), true);
+            })
+            .finally(() => {
+                maintenanceExpensesSyncInFlight = false;
+            });
+    }
+}
+
+function updateMaintenanceExpenseById(expenseId, updater, { syncCloud = true, refreshUi = true } = {}) {
+    const targetId = String(expenseId || '');
+    if (!targetId) return false;
+
+    const expenseIndex = maintenanceExpenses.findIndex(item => item.id === targetId);
+    if (expenseIndex < 0) return false;
+
+    const currentExpense = sanitizeMaintenanceExpense(maintenanceExpenses[expenseIndex], expenseIndex);
+    const currentDocuments = Array.isArray(currentExpense.invoiceDocuments)
+        ? currentExpense.invoiceDocuments.map((doc, docIndex) => sanitizeMaintenanceInvoiceDocument(doc, docIndex)).filter(doc => doc.dataUrl)
+        : [];
+
+    const patch = typeof updater === 'function'
+        ? updater({ ...currentExpense, invoiceDocuments: currentDocuments })
+        : updater;
+
+    if (!patch || typeof patch !== 'object') return false;
+
+    const mergedExpense = {
+        ...currentExpense,
+        ...patch,
+        id: currentExpense.id,
+        updatedAt: new Date().toISOString()
+    };
+
+    const sanitizedExpense = sanitizeMaintenanceExpense(mergedExpense, expenseIndex);
+    maintenanceExpenses = maintenanceExpenses
+        .map((item, index) => (index === expenseIndex ? sanitizedExpense : sanitizeMaintenanceExpense(item, index)))
+        .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+
+    persistMaintenanceExpenses({ syncCloud });
+
+    if (refreshUi) {
+        renderMaintenanceExpenses();
+    }
+
+    return true;
 }
 
 function loadMaintenanceSuppliers() {
@@ -3855,6 +3969,10 @@ function setMaintenanceSuppliers(list, { persistLocal = true, refreshUi = true, 
         .map((entry, index) => sanitizeMaintenanceSupplier(entry, index))
         .filter(entry => entry.name)
         .sort((a, b) => a.name.localeCompare(b.name));
+
+    if (selectedMaintenanceSupplierId && !maintenanceSuppliers.some(item => item.id === selectedMaintenanceSupplierId)) {
+        selectedMaintenanceSupplierId = null;
+    }
 
     if (persistLocal) {
         saveArrayToStorage(MAINTENANCE_SUPPLIERS_STORAGE_KEY, maintenanceSuppliers);
@@ -3874,44 +3992,84 @@ function persistMaintenanceSuppliers({ syncCloud = true } = {}) {
     }
 }
 
+function updateMaintenanceSupplierById(supplierId, updater, { syncCloud = true, refreshUi = true } = {}) {
+    const targetId = String(supplierId || '');
+    if (!targetId) return false;
+
+    const supplierIndex = maintenanceSuppliers.findIndex(item => item.id === targetId);
+    if (supplierIndex < 0) return false;
+
+    const currentSupplier = sanitizeMaintenanceSupplier(maintenanceSuppliers[supplierIndex], supplierIndex);
+    const patch = typeof updater === 'function' ? updater({ ...currentSupplier }) : updater;
+    if (!patch || typeof patch !== 'object') return false;
+
+    const mergedSupplier = {
+        ...currentSupplier,
+        ...patch,
+        id: currentSupplier.id,
+        updatedAt: new Date().toISOString()
+    };
+
+    const sanitizedSupplier = sanitizeMaintenanceSupplier(mergedSupplier, supplierIndex);
+    maintenanceSuppliers = maintenanceSuppliers
+        .map((item, index) => (index === supplierIndex ? sanitizedSupplier : sanitizeMaintenanceSupplier(item, index)))
+        .filter(item => item.name)
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+    persistMaintenanceSuppliers({ syncCloud });
+
+    if (refreshUi) {
+        renderMaintenanceSuppliers();
+    }
+
+    return true;
+}
+
 function renderMaintenanceExpenses() {
     const container = document.getElementById('maintenanceExpensesList');
     if (!container) return;
 
     if (!maintenanceExpenses.length) {
         container.innerHTML = `<div class="maintenance-legend-empty">${t('Aucune dépense enregistrée.', 'No hay gastos registrados.')}</div>`;
+        renderMaintenanceExpenseDetailPanel();
         return;
     }
 
     container.innerHTML = '';
+    const headerRow = document.createElement('div');
+    headerRow.className = 'maintenance-expense-list-header';
+    headerRow.innerHTML =
+        `<span>${t('Date', 'Fecha')}</span>` +
+        `<span>${t('Fournisseur', 'Proveedor')}</span>` +
+        `<span>${t('Statut', 'Estado')}</span>` +
+        `<span class="maintenance-expense-col--amount">${t('Montant', 'Importe')}</span>`;
+    container.appendChild(headerRow);
+
     maintenanceExpenses.forEach((expense, index) => {
-        const card = document.createElement('div');
-        card.className = 'maintenance-expense-card';
+        const row = document.createElement('div');
+        row.className = 'maintenance-expense-row';
+        if (expense.id === selectedMaintenanceExpenseId) {
+            row.classList.add('maintenance-expense-row--active');
+        }
 
-        const paymentLabelMap = {
-            pending: t('À payer', 'Pendiente'),
-            partial: t('Partiel', 'Parcial'),
-            paid: t('Payé', 'Pagado')
-        };
-
-        const linesText = expense.lines.map(line => {
-            const details = [line.label];
-            if (line.quantity != null) details.push(`x${line.quantity}`);
-            if (line.unitPrice != null) details.push(`${line.unitPrice.toFixed(2)}`);
-            if (line.total != null) details.push(`= ${line.total.toFixed(2)}`);
-            return `<div class="maintenance-expense-line">• ${escapeHtml(details.join(' '))}</div>`;
-        }).join('');
-        const aiCommentHtml = escapeHtml(expense.aiComment || '').replace(/\n/g, '<br>');
-
-        card.innerHTML =
-            `<strong>#${index + 1} · ${escapeHtml(expense.supplierName || t('Fournisseur non renseigné', 'Proveedor no indicado'))}</strong><br>` +
-            `${escapeHtml(expense.date)} · ${expense.totalAmount.toFixed(2)} ${escapeHtml(expense.currency)}<br>` +
-            `${t('Payeur', 'Pagador')}: ${escapeHtml(expense.payer)} · ${t('Paiement', 'Pago')}: ${escapeHtml(paymentLabelMap[expense.paymentStatus] || expense.paymentStatus)}<br>` +
-            `${t('IBAN', 'IBAN')}: ${escapeHtml(expense.supplierIban || '—')}` +
-            (expense.invoiceName ? `<br>${t('Facture', 'Factura')}: ${escapeHtml(expense.invoiceName)}` : '') +
-            (expense.note ? `<br>${t('Note', 'Nota')}: ${escapeHtml(expense.note)}` : '') +
-            (expense.aiComment ? `<br><strong>${t('Commentaire IA', 'Comentario IA')}</strong>:<br>${aiCommentHtml}` : '') +
-            (linesText ? `<div style="margin-top:6px;"><strong>${t('Lignes', 'Líneas')}:</strong>${linesText}</div>` : '');
+        const summaryBtn = document.createElement('button');
+        summaryBtn.type = 'button';
+        summaryBtn.className = 'maintenance-expense-summary-btn';
+        summaryBtn.innerHTML =
+            `<span class="maintenance-expense-col">${escapeHtml(expense.date || '—')}</span>` +
+            `<span class="maintenance-expense-col">${escapeHtml(expense.supplierName || t('Fournisseur non renseigné', 'Proveedor no indicado'))}</span>` +
+            `<span class="maintenance-expense-col">${escapeHtml(({
+                new: t('Nouvelle / à payer', 'Nueva / pendiente'),
+                pending: t('À payer', 'Pendiente'),
+                planned: t('À prévoir', 'A prever'),
+                paid: t('Payé', 'Pagado')
+            })[expense.paymentStatus] || expense.paymentStatus || '—')}</span>` +
+            `<span class="maintenance-expense-col maintenance-expense-col--amount">${expense.totalAmount.toFixed(2)} ${escapeHtml(expense.currency)}</span>`;
+        summaryBtn.addEventListener('click', () => {
+            selectedMaintenanceExpenseId = expense.id;
+            renderMaintenanceExpenses();
+        });
+        row.appendChild(summaryBtn);
 
         const actions = document.createElement('div');
         actions.className = 'maintenance-card-actions';
@@ -3919,16 +4077,327 @@ function renderMaintenanceExpenses() {
         deleteBtn.type = 'button';
         deleteBtn.className = 'maintenance-delete-btn';
         deleteBtn.textContent = t('Supprimer', 'Eliminar');
-        deleteBtn.addEventListener('click', () => {
+        deleteBtn.addEventListener('click', event => {
+            event.stopPropagation();
             maintenanceExpenses = maintenanceExpenses.filter(item => item.id !== expense.id);
+            if (selectedMaintenanceExpenseId === expense.id) {
+                selectedMaintenanceExpenseId = null;
+            }
             persistMaintenanceExpenses();
             renderMaintenanceExpenses();
         });
         actions.appendChild(deleteBtn);
-        card.appendChild(actions);
+        row.appendChild(actions);
 
-        container.appendChild(card);
+        container.appendChild(row);
     });
+
+    renderMaintenanceExpenseDetailPanel();
+}
+
+function renderMaintenanceExpenseDetailPanel() {
+    const detailPanel = document.getElementById('maintenanceExpenseDetailPanel');
+    const title = document.getElementById('maintenanceInvoicePreviewTitle');
+    const imagePreview = document.getElementById('maintenanceInvoicePreviewImage');
+    const pdfPreview = document.getElementById('maintenanceInvoicePreviewPdfContainer');
+    const placeholder = document.getElementById('maintenanceInvoicePreviewPlaceholder');
+    if (!detailPanel || !title || !imagePreview || !pdfPreview || !placeholder) return;
+
+    title.style.display = 'flex';
+    title.textContent = t('Détail facture', 'Detalle factura');
+    imagePreview.style.display = 'none';
+    imagePreview.removeAttribute('src');
+    pdfPreview.style.display = 'none';
+    pdfPreview.innerHTML = '';
+    placeholder.style.display = 'none';
+
+    const selectedExpense = maintenanceExpenses.find(item => item.id === selectedMaintenanceExpenseId) || null;
+    if (!selectedExpense) {
+        detailPanel.style.display = 'flex';
+        detailPanel.innerHTML = `<div class="maintenance-detail-empty">${t('Clique sur une facture dans la liste pour voir le détail.', 'Haz clic en una factura de la lista para ver el detalle.')}</div>`;
+        return;
+    }
+
+    const paymentLabelMap = {
+        new: t('Nouvelle / à payer', 'Nueva / pendiente'),
+        pending: t('À payer', 'Pendiente'),
+        planned: t('À prévoir', 'A prever'),
+        paid: t('Payé', 'Pagado')
+    };
+    const linesText = selectedExpense.lines.map(line => {
+        const details = [line.label];
+        if (line.quantity != null) details.push(`x${line.quantity}`);
+        if (line.unitPrice != null) details.push(`${line.unitPrice.toFixed(2)}`);
+        if (line.total != null) details.push(`= ${line.total.toFixed(2)}`);
+        return `<div class="maintenance-expense-line">• ${escapeHtml(details.join(' '))}</div>`;
+    }).join('');
+    const aiCommentHtml = escapeHtml(selectedExpense.aiComment || '').replace(/\n/g, '<br>');
+    const invoiceDocuments = Array.isArray(selectedExpense.invoiceDocuments)
+        ? selectedExpense.invoiceDocuments.filter(doc => String(doc?.dataUrl || ''))
+        : [];
+
+    detailPanel.style.display = 'block';
+    detailPanel.innerHTML =
+        `<div class="maintenance-detail-meta"><strong>${escapeHtml(selectedExpense.supplierName || t('Fournisseur non renseigné', 'Proveedor no indicado'))}</strong></div>` +
+        `<div class="maintenance-detail-meta">${escapeHtml(selectedExpense.date)} · ${selectedExpense.totalAmount.toFixed(2)} ${escapeHtml(selectedExpense.currency)}</div>` +
+        `<div class="maintenance-detail-meta">${t('Payeur', 'Pagador')}: ${escapeHtml(selectedExpense.payer)} · ${t('Paiement', 'Pago')}: ${escapeHtml(paymentLabelMap[selectedExpense.paymentStatus] || selectedExpense.paymentStatus)}</div>` +
+        `<div class="maintenance-detail-meta">${t('IBAN', 'IBAN')}: ${escapeHtml(selectedExpense.supplierIban || '—')}</div>` +
+        (selectedExpense.note ? `<div class="maintenance-detail-block"><strong>${t('Note', 'Nota')}</strong>: ${escapeHtml(selectedExpense.note)}</div>` : '') +
+        (selectedExpense.aiComment ? `<div class="maintenance-detail-block"><strong>${t('Commentaire facture', 'Comentario factura')}</strong>:<br>${aiCommentHtml}</div>` : '') +
+        (linesText ? `<div class="maintenance-detail-block"><strong>${t('Lignes', 'Líneas')}:</strong>${linesText}</div>` : '');
+
+    const editSection = document.createElement('div');
+    editSection.className = 'maintenance-detail-block';
+
+    const editTitle = document.createElement('strong');
+    editTitle.textContent = t('Mettre à jour la facture', 'Actualizar factura');
+    editSection.appendChild(editTitle);
+
+    const editStatusSelect = document.createElement('select');
+    editStatusSelect.style.width = '100%';
+    editStatusSelect.style.marginTop = '6px';
+    editStatusSelect.style.boxSizing = 'border-box';
+    [
+        { value: 'new', label: t('Nouvelle / à payer', 'Nueva / pendiente') },
+        { value: 'pending', label: t('À payer', 'Pendiente') },
+        { value: 'planned', label: t('À prévoir', 'A prever') },
+        { value: 'paid', label: t('Payé', 'Pagado') }
+    ].forEach(item => {
+        const option = document.createElement('option');
+        option.value = item.value;
+        option.textContent = item.label;
+        editStatusSelect.appendChild(option);
+    });
+    editStatusSelect.value = ['new', 'pending', 'planned', 'paid'].includes(selectedExpense.paymentStatus)
+        ? selectedExpense.paymentStatus
+        : 'pending';
+    editSection.appendChild(editStatusSelect);
+
+    const editDateInput = document.createElement('input');
+    editDateInput.type = 'date';
+    editDateInput.value = String(selectedExpense.date || '');
+    editDateInput.style.width = '100%';
+    editDateInput.style.marginTop = '6px';
+    editDateInput.style.boxSizing = 'border-box';
+    editSection.appendChild(editDateInput);
+
+    const editSupplierInput = document.createElement('input');
+    editSupplierInput.type = 'text';
+    editSupplierInput.value = String(selectedExpense.supplierName || '');
+    editSupplierInput.placeholder = t('Fournisseur', 'Proveedor');
+    editSupplierInput.style.width = '100%';
+    editSupplierInput.style.marginTop = '6px';
+    editSupplierInput.style.boxSizing = 'border-box';
+    editSection.appendChild(editSupplierInput);
+
+    const editAmountInput = document.createElement('input');
+    editAmountInput.type = 'number';
+    editAmountInput.step = '0.01';
+    editAmountInput.min = '0';
+    editAmountInput.value = Number.isFinite(selectedExpense.totalAmount) ? selectedExpense.totalAmount.toFixed(2) : '0.00';
+    editAmountInput.style.width = '100%';
+    editAmountInput.style.marginTop = '6px';
+    editAmountInput.style.boxSizing = 'border-box';
+    editSection.appendChild(editAmountInput);
+
+    const saveEditBtn = document.createElement('button');
+    saveEditBtn.type = 'button';
+    saveEditBtn.className = 'maintenance-delete-btn';
+    saveEditBtn.style.marginTop = '6px';
+    saveEditBtn.textContent = t('Mettre à jour', 'Actualizar');
+    saveEditBtn.addEventListener('click', () => {
+        const nextAmount = toFiniteAmount(editAmountInput.value);
+        updateMaintenanceExpenseById(selectedExpense.id, {
+            paymentStatus: ['new', 'pending', 'planned', 'paid'].includes(editStatusSelect.value) ? editStatusSelect.value : 'pending',
+            date: String(editDateInput.value || selectedExpense.date || '').trim(),
+            supplierName: String(editSupplierInput.value || '').trim(),
+            totalAmount: nextAmount > 0 ? nextAmount : selectedExpense.totalAmount
+        }, { refreshUi: false });
+        renderMaintenanceExpenses();
+    });
+    editSection.appendChild(saveEditBtn);
+
+    detailPanel.appendChild(editSection);
+
+    const docsSection = document.createElement('div');
+    docsSection.className = 'maintenance-detail-block';
+    docsSection.innerHTML = `<strong>${t('Pièces du dossier', 'Piezas del expediente')}</strong>`;
+
+    if (invoiceDocuments.length) {
+        const docsList = document.createElement('div');
+        docsList.className = 'maintenance-doc-list';
+        invoiceDocuments.forEach((doc, docIndex) => {
+            const docCard = document.createElement('div');
+            docCard.className = 'maintenance-doc-item';
+
+            const docName = document.createElement('div');
+            docName.className = 'maintenance-doc-name';
+            docName.textContent = String(doc.name || `${t('Document', 'Documento')} ${docIndex + 1}`);
+            docCard.appendChild(docName);
+
+            const mimeType = String(doc.mimeType || '').toLowerCase();
+            const docDataUrl = String(doc.dataUrl || '');
+            const docFileName = String(doc.name || '');
+            const isImageDoc = mimeType.startsWith('image/');
+            const isPdfDoc = mimeType.includes('pdf') || /\.pdf$/i.test(docFileName);
+
+            const previewBlock = document.createElement('div');
+            previewBlock.className = 'maintenance-doc-preview';
+            if (isImageDoc && docDataUrl) {
+                const imagePreviewEl = document.createElement('img');
+                imagePreviewEl.className = 'maintenance-doc-preview-image';
+                imagePreviewEl.src = docDataUrl;
+                imagePreviewEl.alt = docFileName || `${t('Aperçu du document', 'Vista previa del documento')} ${docIndex + 1}`;
+                previewBlock.appendChild(imagePreviewEl);
+            } else if (isPdfDoc && docDataUrl) {
+                const pdfPreviewFrame = document.createElement('iframe');
+                pdfPreviewFrame.className = 'maintenance-doc-preview-pdf';
+                pdfPreviewFrame.src = `${docDataUrl}#toolbar=0&navpanes=0&scrollbar=0`;
+                pdfPreviewFrame.title = docFileName || `${t('Aperçu PDF', 'Vista previa PDF')} ${docIndex + 1}`;
+                previewBlock.appendChild(pdfPreviewFrame);
+            } else {
+                const fallbackPreviewText = document.createElement('div');
+                fallbackPreviewText.className = 'maintenance-doc-preview-fallback';
+                fallbackPreviewText.textContent = t('Aperçu indisponible', 'Vista previa no disponible');
+                previewBlock.appendChild(fallbackPreviewText);
+            }
+            docCard.appendChild(previewBlock);
+
+            const docActions = document.createElement('div');
+            docActions.className = 'maintenance-doc-actions';
+
+            const openLink = document.createElement('a');
+            openLink.href = String(doc.dataUrl || '');
+            openLink.target = '_blank';
+            openLink.rel = 'noopener';
+            openLink.textContent = t('Ouvrir', 'Abrir');
+            docActions.appendChild(openLink);
+
+            const downloadLink = document.createElement('a');
+            downloadLink.href = String(doc.dataUrl || '');
+            downloadLink.target = '_blank';
+            downloadLink.rel = 'noopener';
+            downloadLink.download = String(doc.name || `${t('Document', 'Documento')} ${docIndex + 1}`);
+            downloadLink.textContent = t('Télécharger', 'Descargar');
+            docActions.appendChild(downloadLink);
+
+            const deleteDocBtn = document.createElement('button');
+            deleteDocBtn.type = 'button';
+            deleteDocBtn.className = 'maintenance-doc-remove-btn';
+            deleteDocBtn.textContent = t('Supprimer', 'Eliminar');
+            deleteDocBtn.addEventListener('click', () => {
+                updateMaintenanceExpenseById(selectedExpense.id, currentExpense => {
+                    const currentDocs = Array.isArray(currentExpense.invoiceDocuments)
+                        ? currentExpense.invoiceDocuments.filter(item => String(item?.dataUrl || ''))
+                        : [];
+                    const nextDocs = currentDocs.filter(item => item.id !== doc.id);
+                    const firstDoc = nextDocs[0] || null;
+
+                    return {
+                        invoiceDocuments: nextDocs,
+                        invoiceName: String(firstDoc?.name || ''),
+                        invoiceDataUrl: String(firstDoc?.dataUrl || ''),
+                        invoiceMimeType: String(firstDoc?.mimeType || ''),
+                        invoiceSizeBytes: Math.max(0, Number(firstDoc?.sizeBytes || 0) || 0)
+                    };
+                });
+            });
+            docActions.appendChild(deleteDocBtn);
+
+            docCard.appendChild(docActions);
+            docsList.appendChild(docCard);
+        });
+        docsSection.appendChild(docsList);
+    } else {
+        const emptyText = document.createElement('div');
+        emptyText.className = 'maintenance-legend-empty';
+        emptyText.textContent = t('Aucune pièce dans ce dossier.', 'No hay piezas en este expediente.');
+        docsSection.appendChild(emptyText);
+    }
+
+    const addDocsInput = document.createElement('input');
+    addDocsInput.type = 'file';
+    addDocsInput.multiple = true;
+    addDocsInput.accept = 'image/*,.pdf';
+    addDocsInput.style.marginTop = '8px';
+    addDocsInput.style.width = '100%';
+    docsSection.appendChild(addDocsInput);
+
+    const addDocsBtn = document.createElement('button');
+    addDocsBtn.type = 'button';
+    addDocsBtn.className = 'maintenance-delete-btn';
+    addDocsBtn.style.marginTop = '6px';
+    addDocsBtn.textContent = t('Ajouter des fichiers au dossier', 'Añadir archivos al expediente');
+    addDocsBtn.addEventListener('click', async () => {
+        const files = Array.from(addDocsInput.files || []);
+        if (!files.length) return;
+
+        const newDocs = [];
+        for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+            const file = files[fileIndex];
+            try {
+                const dataUrl = await imageFileToDataUrl(file);
+                newDocs.push(sanitizeMaintenanceInvoiceDocument({
+                    id: `expense-doc-${Date.now()}-${fileIndex}`,
+                    name: file.name,
+                    dataUrl,
+                    mimeType: file.type,
+                    sizeBytes: file.size
+                }, fileIndex));
+            } catch (_error) {
+                continue;
+            }
+        }
+
+        if (!newDocs.length) return;
+
+        updateMaintenanceExpenseById(selectedExpense.id, currentExpense => {
+            const currentDocs = Array.isArray(currentExpense.invoiceDocuments)
+                ? currentExpense.invoiceDocuments.filter(item => String(item?.dataUrl || ''))
+                : [];
+            const nextDocs = [...currentDocs, ...newDocs];
+            const firstDoc = nextDocs[0] || null;
+
+            return {
+                invoiceDocuments: nextDocs,
+                invoiceName: String(firstDoc?.name || currentExpense.invoiceName || ''),
+                invoiceDataUrl: String(firstDoc?.dataUrl || currentExpense.invoiceDataUrl || ''),
+                invoiceMimeType: String(firstDoc?.mimeType || currentExpense.invoiceMimeType || ''),
+                invoiceSizeBytes: Math.max(0, Number(firstDoc?.sizeBytes || currentExpense.invoiceSizeBytes || 0) || 0)
+            };
+        });
+
+        addDocsInput.value = '';
+    });
+    docsSection.appendChild(addDocsBtn);
+    detailPanel.appendChild(docsSection);
+
+    const postCommentLabel = document.createElement('div');
+    postCommentLabel.className = 'maintenance-detail-block';
+    postCommentLabel.innerHTML = `<strong>${t('Commentaire suivi', 'Comentario de seguimiento')}</strong>`;
+    detailPanel.appendChild(postCommentLabel);
+
+    const postCommentInput = document.createElement('textarea');
+    postCommentInput.rows = 3;
+    postCommentInput.value = String(selectedExpense.postComment || '');
+    postCommentInput.placeholder = t('Ajoute un commentaire après enregistrement', 'Añade un comentario después del registro');
+    postCommentInput.style.width = '100%';
+    postCommentInput.style.marginTop = '6px';
+    postCommentInput.style.boxSizing = 'border-box';
+    detailPanel.appendChild(postCommentInput);
+
+    const savePostCommentBtn = document.createElement('button');
+    savePostCommentBtn.type = 'button';
+    savePostCommentBtn.className = 'maintenance-delete-btn';
+    savePostCommentBtn.style.marginTop = '6px';
+    savePostCommentBtn.textContent = t('Enregistrer commentaire suivi', 'Guardar comentario de seguimiento');
+    savePostCommentBtn.addEventListener('click', () => {
+        updateMaintenanceExpenseById(selectedExpense.id, {
+            postComment: String(postCommentInput.value || '').trim()
+        }, { refreshUi: false });
+        renderMaintenanceExpenseDetailPanel();
+    });
+    detailPanel.appendChild(savePostCommentBtn);
 }
 
 function renderMaintenanceSuppliers() {
@@ -3937,19 +4406,38 @@ function renderMaintenanceSuppliers() {
 
     if (!maintenanceSuppliers.length) {
         container.innerHTML = `<div class="maintenance-legend-empty">${t('Aucun fournisseur enregistré.', 'Ningún proveedor registrado.')}</div>`;
+        renderMaintenanceSupplierDetailPanel();
         return;
     }
 
     container.innerHTML = '';
+    const headerRow = document.createElement('div');
+    headerRow.className = 'maintenance-supplier-list-header';
+    headerRow.innerHTML =
+        `<span>${t('Nom', 'Nombre')}</span>` +
+        `<span>${t('Contact', 'Contacto')}</span>` +
+        `<span>${t('Urgence', 'Urgencia')}</span>`;
+    container.appendChild(headerRow);
+
     maintenanceSuppliers.forEach((supplier, index) => {
         const card = document.createElement('div');
-        card.className = 'maintenance-supplier-card';
-        card.innerHTML =
-            `<strong>#${index + 1} · ${escapeHtml(supplier.name)}</strong><br>` +
-            `${t('Contact', 'Contacto')}: ${escapeHtml(supplier.contact || '—')}<br>` +
-            `${t('Urgence', 'Urgencia')}: ${escapeHtml(supplier.emergencyPhone || '—')}<br>` +
-            `${t('IBAN', 'IBAN')}: ${escapeHtml(supplier.iban || '—')}` +
-            (supplier.note ? `<br>${t('Note', 'Nota')}: ${escapeHtml(supplier.note)}` : '');
+        card.className = 'maintenance-supplier-row';
+        if (supplier.id === selectedMaintenanceSupplierId) {
+            card.classList.add('maintenance-supplier-row--active');
+        }
+
+        const summaryBtn = document.createElement('button');
+        summaryBtn.type = 'button';
+        summaryBtn.className = 'maintenance-supplier-summary-btn';
+        summaryBtn.innerHTML =
+            `<span class="maintenance-expense-col">${escapeHtml(supplier.name || `${t('Fournisseur', 'Proveedor')} ${index + 1}`)}</span>` +
+            `<span class="maintenance-expense-col">${escapeHtml(supplier.contact || '—')}</span>` +
+            `<span class="maintenance-expense-col">${escapeHtml(supplier.emergencyPhone || '—')}</span>`;
+        summaryBtn.addEventListener('click', () => {
+            selectedMaintenanceSupplierId = supplier.id;
+            renderMaintenanceSuppliers();
+        });
+        card.appendChild(summaryBtn);
 
         const actions = document.createElement('div');
         actions.className = 'maintenance-card-actions';
@@ -3959,6 +4447,9 @@ function renderMaintenanceSuppliers() {
         deleteBtn.textContent = t('Supprimer', 'Eliminar');
         deleteBtn.addEventListener('click', () => {
             maintenanceSuppliers = maintenanceSuppliers.filter(item => item.id !== supplier.id);
+            if (selectedMaintenanceSupplierId === supplier.id) {
+                selectedMaintenanceSupplierId = null;
+            }
             persistMaintenanceSuppliers();
             renderMaintenanceSuppliers();
         });
@@ -3967,6 +4458,240 @@ function renderMaintenanceSuppliers() {
 
         container.appendChild(card);
     });
+
+    renderMaintenanceSupplierDetailPanel();
+}
+
+function renderMaintenanceSupplierDetailPanel() {
+    const detailPanel = document.getElementById('maintenanceExpenseDetailPanel');
+    const title = document.getElementById('maintenanceInvoicePreviewTitle');
+    const imagePreview = document.getElementById('maintenanceInvoicePreviewImage');
+    const pdfPreview = document.getElementById('maintenanceInvoicePreviewPdfContainer');
+    const placeholder = document.getElementById('maintenanceInvoicePreviewPlaceholder');
+    if (!detailPanel || !title || !imagePreview || !pdfPreview || !placeholder) return;
+
+    title.style.display = 'flex';
+    title.textContent = t('Détail fournisseur', 'Detalle proveedor');
+    imagePreview.style.display = 'none';
+    imagePreview.removeAttribute('src');
+    pdfPreview.style.display = 'none';
+    pdfPreview.innerHTML = '';
+    placeholder.style.display = 'none';
+
+    const selectedSupplier = maintenanceSuppliers.find(item => item.id === selectedMaintenanceSupplierId) || null;
+    detailPanel.style.display = 'block';
+    detailPanel.innerHTML = '';
+
+    const modeLabel = document.createElement('div');
+    modeLabel.className = 'maintenance-detail-meta';
+    modeLabel.innerHTML = `<strong>${selectedSupplier ? t('Modification fournisseur', 'Edición proveedor') : t('Nouveau fournisseur', 'Nuevo proveedor')}</strong>`;
+    detailPanel.appendChild(modeLabel);
+
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.placeholder = t('Nom fournisseur', 'Nombre proveedor');
+    nameInput.value = String(selectedSupplier?.name || '');
+    nameInput.style.width = '100%';
+    nameInput.style.marginTop = '6px';
+    nameInput.style.boxSizing = 'border-box';
+    detailPanel.appendChild(nameInput);
+
+    const contactInput = document.createElement('input');
+    contactInput.type = 'text';
+    contactInput.placeholder = t('Contact', 'Contacto');
+    contactInput.value = String(selectedSupplier?.contact || '');
+    contactInput.style.width = '100%';
+    contactInput.style.marginTop = '6px';
+    contactInput.style.boxSizing = 'border-box';
+    detailPanel.appendChild(contactInput);
+
+    const phoneInput = document.createElement('input');
+    phoneInput.type = 'text';
+    phoneInput.placeholder = t('Téléphone urgence', 'Teléfono urgencia');
+    phoneInput.value = String(selectedSupplier?.emergencyPhone || '');
+    phoneInput.style.width = '100%';
+    phoneInput.style.marginTop = '6px';
+    phoneInput.style.boxSizing = 'border-box';
+    detailPanel.appendChild(phoneInput);
+
+    const ibanInput = document.createElement('input');
+    ibanInput.type = 'text';
+    ibanInput.placeholder = 'IBAN';
+    ibanInput.value = String(selectedSupplier?.iban || '');
+    ibanInput.style.width = '100%';
+    ibanInput.style.marginTop = '6px';
+    ibanInput.style.boxSizing = 'border-box';
+    detailPanel.appendChild(ibanInput);
+
+    const noteInput = document.createElement('textarea');
+    noteInput.rows = 2;
+    noteInput.placeholder = t('Note', 'Nota');
+    noteInput.value = String(selectedSupplier?.note || '');
+    noteInput.style.width = '100%';
+    noteInput.style.marginTop = '6px';
+    noteInput.style.boxSizing = 'border-box';
+    detailPanel.appendChild(noteInput);
+
+    const attachInput = document.createElement('input');
+    attachInput.type = 'file';
+    attachInput.multiple = true;
+    attachInput.accept = 'image/*,.pdf';
+    attachInput.style.width = '100%';
+    attachInput.style.marginTop = '6px';
+    attachInput.style.boxSizing = 'border-box';
+    detailPanel.appendChild(attachInput);
+
+    const actionRow = document.createElement('div');
+    actionRow.className = 'button-row';
+
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.style.flex = '1';
+    addBtn.textContent = t('Ajouter fournisseur', 'Añadir proveedor');
+    addBtn.addEventListener('click', async () => {
+        const name = String(nameInput.value || '').trim();
+        if (!name) return;
+
+        const files = Array.from(attachInput.files || []);
+        const documents = [];
+        for (let index = 0; index < files.length; index++) {
+            const file = files[index];
+            try {
+                const dataUrl = await imageFileToDataUrl(file);
+                documents.push(sanitizeMaintenanceInvoiceDocument({
+                    id: `supplier-doc-${Date.now()}-${index}`,
+                    name: file.name,
+                    dataUrl,
+                    mimeType: file.type,
+                    sizeBytes: file.size
+                }, index));
+            } catch (_error) {
+                continue;
+            }
+        }
+
+        const entry = sanitizeMaintenanceSupplier({
+            id: `supplier-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            name,
+            contact: contactInput.value,
+            emergencyPhone: phoneInput.value,
+            iban: ibanInput.value,
+            note: noteInput.value,
+            documents,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        }, maintenanceSuppliers.length);
+
+        maintenanceSuppliers.push(entry);
+        selectedMaintenanceSupplierId = entry.id;
+        persistMaintenanceSuppliers();
+        renderMaintenanceSuppliers();
+    });
+    actionRow.appendChild(addBtn);
+
+    const updateBtn = document.createElement('button');
+    updateBtn.type = 'button';
+    updateBtn.style.flex = '1';
+    updateBtn.textContent = t('Mettre à jour fournisseur', 'Actualizar proveedor');
+    updateBtn.disabled = !selectedSupplier;
+    updateBtn.addEventListener('click', async () => {
+        if (!selectedSupplier) return;
+        const name = String(nameInput.value || '').trim();
+        if (!name) return;
+
+        const newDocuments = [];
+        const files = Array.from(attachInput.files || []);
+        for (let index = 0; index < files.length; index++) {
+            const file = files[index];
+            try {
+                const dataUrl = await imageFileToDataUrl(file);
+                newDocuments.push(sanitizeMaintenanceInvoiceDocument({
+                    id: `supplier-doc-${Date.now()}-${index}`,
+                    name: file.name,
+                    dataUrl,
+                    mimeType: file.type,
+                    sizeBytes: file.size
+                }, index));
+            } catch (_error) {
+                continue;
+            }
+        }
+
+        updateMaintenanceSupplierById(selectedSupplier.id, current => ({
+            name,
+            contact: String(contactInput.value || '').trim(),
+            emergencyPhone: String(phoneInput.value || '').trim(),
+            iban: String(ibanInput.value || '').trim(),
+            note: String(noteInput.value || '').trim(),
+            documents: [...(Array.isArray(current.documents) ? current.documents : []), ...newDocuments]
+        }));
+    });
+    actionRow.appendChild(updateBtn);
+    detailPanel.appendChild(actionRow);
+
+    const documents = Array.isArray(selectedSupplier?.documents)
+        ? selectedSupplier.documents.filter(item => String(item?.dataUrl || ''))
+        : [];
+
+    const docsSection = document.createElement('div');
+    docsSection.className = 'maintenance-detail-block';
+    docsSection.innerHTML = `<strong>${t('Pièces jointes fournisseur', 'Adjuntos proveedor')}</strong>`;
+
+    if (!documents.length) {
+        const emptyText = document.createElement('div');
+        emptyText.className = 'maintenance-legend-empty';
+        emptyText.textContent = t('Aucune pièce jointe.', 'Sin adjuntos.');
+        docsSection.appendChild(emptyText);
+    } else {
+        const docsList = document.createElement('div');
+        docsList.className = 'maintenance-doc-list';
+        documents.forEach((doc, docIndex) => {
+            const docCard = document.createElement('div');
+            docCard.className = 'maintenance-doc-item';
+
+            const docName = document.createElement('div');
+            docName.className = 'maintenance-doc-name';
+            docName.textContent = String(doc.name || `${t('Document', 'Documento')} ${docIndex + 1}`);
+            docCard.appendChild(docName);
+
+            const docActions = document.createElement('div');
+            docActions.className = 'maintenance-doc-actions';
+
+            const openLink = document.createElement('a');
+            openLink.href = String(doc.dataUrl || '');
+            openLink.target = '_blank';
+            openLink.rel = 'noopener';
+            openLink.textContent = t('Ouvrir', 'Abrir');
+            docActions.appendChild(openLink);
+
+            const downloadLink = document.createElement('a');
+            downloadLink.href = String(doc.dataUrl || '');
+            downloadLink.target = '_blank';
+            downloadLink.rel = 'noopener';
+            downloadLink.download = String(doc.name || `${t('Document', 'Documento')} ${docIndex + 1}`);
+            downloadLink.textContent = t('Télécharger', 'Descargar');
+            docActions.appendChild(downloadLink);
+
+            const deleteDocBtn = document.createElement('button');
+            deleteDocBtn.type = 'button';
+            deleteDocBtn.className = 'maintenance-doc-remove-btn';
+            deleteDocBtn.textContent = t('Supprimer', 'Eliminar');
+            deleteDocBtn.disabled = !selectedSupplier;
+            deleteDocBtn.addEventListener('click', () => {
+                if (!selectedSupplier) return;
+                updateMaintenanceSupplierById(selectedSupplier.id, current => ({
+                    documents: (Array.isArray(current.documents) ? current.documents : []).filter(item => item.id !== doc.id)
+                }));
+            });
+            docActions.appendChild(deleteDocBtn);
+
+            docCard.appendChild(docActions);
+            docsList.appendChild(docCard);
+        });
+        docsSection.appendChild(docsList);
+    }
+
+    detailPanel.appendChild(docsSection);
 }
 
 function extractIbanFromText(text) {
@@ -4247,110 +4972,6 @@ function extractInvoiceFields(text, fileName = '') {
     };
 }
 
-function buildExpensePreventionComment({ supplierName = '', totalAmount = null, detectedLines = [] } = {}) {
-    const cleanedLines = (Array.isArray(detectedLines) ? detectedLines : [])
-        .map(line => String(line || '').trim())
-        .filter(Boolean)
-        .slice(0, 12);
-    const joined = cleanedLines.join(' ').toLowerCase();
-
-    const themes = [
-        {
-            key: 'water',
-            regex: /(pompe|pump|impeller|turbine|water pump|eau de mer|waterline|cooling)/i,
-            risk: t('Risque refroidissement moteur: panne turbine/pompe ou débit eau insuffisant.', 'Riesgo de refrigeración motor: fallo turbina/bomba o caudal insuficiente.'),
-            controls: t('Contrôler aspiration eau de mer, filtre, turbine et température moteur après intervention.', 'Controlar aspiración de agua de mar, filtro, turbina y temperatura motor tras la intervención.'),
-            prevention: t('Programmer contrôle visuel toutes les 50h et remplacement préventif turbine selon manuel.', 'Programar control visual cada 50h y sustitución preventiva de turbina según manual.')
-        },
-        {
-            key: 'engine',
-            regex: /(filtre|filter|huile|oil|fuel|injecteur|injector|courroie|belt)/i,
-            risk: t('Risque performance moteur: encrassement ou usure prématurée.', 'Riesgo de rendimiento motor: ensuciamiento o desgaste prematuro.'),
-            controls: t('Vérifier heures moteur, référence pièces montées et conformité viscosité/grade.', 'Verificar horas motor, referencia de piezas montadas y conformidad de viscosidad/grado.'),
-            prevention: t('Créer un plan périodique filtres/huile avec seuils heures moteur et stock mini à bord.', 'Crear un plan periódico de filtros/aceite con umbrales de horas y stock mínimo a bordo.')
-        },
-        {
-            key: 'electric',
-            regex: /(batterie|battery|alternateur|alternator|chargeur|charger|cable|câble|fusible|relay|relais)/i,
-            risk: t('Risque électrique: perte de charge, coupure ou panne intermittente.', 'Riesgo eléctrico: pérdida de carga, corte o fallo intermitente.'),
-            controls: t('Mesurer tension repos/charge, serrage bornes et chute de tension sous charge.', 'Medir tensión en reposo/carga, apriete de bornes y caída de tensión bajo carga.'),
-            prevention: t('Planifier test de capacité batterie et inspection connexions anticorrosion.', 'Planificar test de capacidad de batería e inspección de conexiones anticorrosión.')
-        },
-        {
-            key: 'seal',
-            regex: /(joint|seal|gasket|durite|hose|collier|etancheite|étanchéité|fuite|leak)/i,
-            risk: t('Risque fuite: perte de fluide et avarie secondaire.', 'Riesgo de fuga: pérdida de fluido y avería secundaria.'),
-            controls: t('Recontrôler l’étanchéité à chaud et à froid 24h après remise en service.', 'Revisar estanqueidad en caliente y en frío 24h después de la puesta en servicio.'),
-            prevention: t('Ajouter contrôle anti-fuite en ronde et remplacer consommables d’étanchéité par lot.', 'Añadir control antifugas en ronda y sustituir consumibles de estanqueidad por lote.')
-        }
-    ];
-
-    const matchedThemes = themes.filter(theme => theme.regex.test(joined));
-    const keyLines = cleanedLines
-        .filter(line => !/\b(total|ttc|ht|tv[ao]|amount|importe|montant|iban)\b/i.test(line))
-        .slice(0, 4);
-
-    const risks = [];
-    const controls = [];
-    const prevention = [];
-
-    if (Number.isFinite(totalAmount) && totalAmount >= 1000) {
-        risks.push(t('Montant élevé: impact budget significatif et risque de validation incomplète.', 'Importe elevado: impacto presupuestario significativo y riesgo de validación incompleta.'));
-        controls.push(t('Exiger devis comparatif, preuve d’exécution et validation croisée avant paiement.', 'Exigir presupuesto comparativo, prueba de ejecución y validación cruzada antes del pago.'));
-    }
-    if (Number.isFinite(totalAmount) && totalAmount >= 3000) {
-        prevention.push(t('Mettre en place un seuil d’alerte > 3000 avec approbation à deux niveaux.', 'Configurar umbral de alerta > 3000 con aprobación en dos niveles.'));
-    }
-
-    matchedThemes.forEach(theme => {
-        risks.push(theme.risk);
-        controls.push(theme.controls);
-        prevention.push(theme.prevention);
-    });
-
-    if (!risks.length) {
-        risks.push(t('Risque principal non catégorisé: possible écart entre prestation facturée et besoin réel.', 'Riesgo principal no categorizado: posible desvío entre servicio facturado y necesidad real.'));
-    }
-    if (!controls.length) {
-        controls.push(t('Contrôler cohérence facture/pièces remplacées/main d’œuvre avant clôture.', 'Controlar coherencia factura/piezas sustituidas/mano de obra antes del cierre.'));
-    }
-    if (!prevention.length) {
-        prevention.push(t('Documenter cause racine, action corrective et date du prochain contrôle.', 'Documentar causa raíz, acción correctiva y fecha del próximo control.'));
-    }
-
-    const docs = [
-        t('Archiver facture + photos avant/après + référence des pièces.', 'Archivar factura + fotos antes/después + referencia de piezas.'),
-        t('Noter heures moteur et test de validation après intervention.', 'Anotar horas motor y prueba de validación tras la intervención.')
-    ];
-
-    const header = t('Commentaire IA · Analyse facture', 'Comentario IA · Análisis de factura');
-    const supplierLine = supplierName ? `${t('Fournisseur', 'Proveedor')}: ${supplierName}` : t('Fournisseur: non confirmé', 'Proveedor: no confirmado');
-    const amountLine = Number.isFinite(totalAmount) && totalAmount > 0 ? `${t('Montant détecté', 'Importe detectado')}: ${totalAmount.toFixed(2)}` : t('Montant détecté: non trouvé', 'Importe detectado: no encontrado');
-    const keyLinesBlock = keyLines.length
-        ? keyLines.map(line => `- ${line}`).join('\n')
-        : `- ${t('Aucune ligne exploitable détectée dans le scan.', 'No se detectaron líneas aprovechables en el escaneo.')}`;
-
-    return [
-        header,
-        `${supplierLine} · ${amountLine}`,
-        '',
-        t('Éléments détectés', 'Elementos detectados'),
-        keyLinesBlock,
-        '',
-        t('Risques probables', 'Riesgos probables'),
-        risks.map(item => `- ${item}`).join('\n'),
-        '',
-        t('Contrôles à faire avant paiement', 'Controles antes del pago'),
-        controls.map(item => `- ${item}`).join('\n'),
-        '',
-        t('Prévention (30-90 jours)', 'Prevención (30-90 días)'),
-        prevention.map(item => `- ${item}`).join('\n'),
-        '',
-        t('Pièces à archiver', 'Documentos a archivar'),
-        docs.map(item => `- ${item}`).join('\n')
-    ].join('\n');
-}
-
 async function loadMaintenancePdfJs() {
     if (!maintenancePdfJsLoader) {
         maintenancePdfJsLoader = import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.7.76/build/pdf.min.mjs');
@@ -4423,312 +5044,6 @@ async function renderSelectablePdfPreview(file, container) {
         pageNode.appendChild(textLayer);
         container.appendChild(pageNode);
     }
-}
-
-function buildAlternativeLlmPrompt({ supplierName = '', invoiceDate = '', iban = '', totalAmount = null, currency = 'EUR', rawText = '' } = {}) {
-    const supplier = supplierName || t('Non confirmé', 'No confirmado');
-    const date = invoiceDate || t('Non détectée', 'No detectada');
-    const ibanValue = iban || t('Non détecté', 'No detectado');
-    const amount = Number.isFinite(totalAmount) && totalAmount > 0
-        ? `${totalAmount.toFixed(2)} ${String(currency || 'EUR').toUpperCase()}`
-        : t('Non détecté', 'No detectado');
-    const excerpt = String(rawText || '').trim().slice(0, 12000);
-
-    return currentLanguage === 'es'
-        ? [
-            'Analiza críticamente esta factura náutica y devuelve un informe accionable.',
-            `Proveedor: ${supplier}`,
-            `Fecha: ${date}`,
-            `IBAN: ${ibanValue}`,
-            `Importe: ${amount}`,
-            '',
-            'Texto OCR/PDF:',
-            excerpt || '(sin texto)',
-            '',
-            'Responde con secciones: Riesgos, Controles antes de pago, Prevención 30-90 días, Alertas de fraude/error, Resumen ejecutivo.'
-        ].join('\n')
-        : [
-            'Analyse cette facture nautique de façon critique et produis un rapport actionnable.',
-            `Fournisseur: ${supplier}`,
-            `Date: ${date}`,
-            `IBAN: ${ibanValue}`,
-            `Montant: ${amount}`,
-            '',
-            'Texte OCR/PDF:',
-            excerpt || '(pas de texte)',
-            '',
-            'Réponds avec les sections: Risques, Contrôles avant paiement, Prévention 30-90 jours, Alertes fraude/erreur, Résumé exécutif.'
-        ].join('\n');
-}
-
-async function requestAlternativeLlmAnalysis({ provider = '', apiKey = '', model = '', prompt = '' } = {}) {
-    const safeProvider = String(provider || '').trim().toLowerCase();
-    const safeApiKey = sanitizeApiKey(apiKey);
-    const safeModel = String(model || '').trim();
-    const requiresApiKey = safeProvider === 'openai';
-    if (!safeProvider || !safeModel || !prompt || (requiresApiKey && !safeApiKey)) {
-        throw new Error(t('Paramètres IA incomplets.', 'Parámetros IA incompletos.'));
-    }
-
-    if (safeProvider === 'openai') {
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${safeApiKey}`
-            },
-            body: JSON.stringify({
-                model: safeModel,
-                messages: [
-                    { role: 'system', content: 'You are a marine maintenance invoice analyst. Be precise and practical.' },
-                    { role: 'user', content: prompt }
-                ],
-                temperature: 0.2
-            })
-        });
-        if (!response.ok) {
-            throw await buildAlternativeLlmHttpError('OpenAI', response);
-        }
-        const data = await response.json();
-        return String(data?.choices?.[0]?.message?.content || '').trim();
-    }
-
-    if (safeProvider === 'anthropic') {
-        const proxyConfig = getAnthropicProxyConfig();
-        if (proxyConfig?.endpointUrl) {
-            const response = await fetch(proxyConfig.endpointUrl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'apikey': proxyConfig.anonKey,
-                    'Authorization': `Bearer ${proxyConfig.anonKey}`
-                },
-                body: JSON.stringify({
-                    model: safeModel,
-                    prompt,
-                    maxTokens: 1400,
-                    temperature: 0.2
-                })
-            });
-            if (!response.ok) {
-                throw await buildAlternativeLlmHttpError('Anthropic proxy', response);
-            }
-            const data = await response.json();
-            return String(data?.text || '').trim();
-        }
-
-        if (isAnthropicDirectCallBlockedByBrowser()) {
-            throw new Error(t(
-                'Anthropic direct depuis navigateur bloqué (CORS). Configure un proxy Supabase Edge Function (anthropic-proxy).',
-                'Anthropic directo desde navegador bloqueado (CORS). Configura un proxy Supabase Edge Function (anthropic-proxy).'
-            ));
-        }
-        const response = await fetch('https://api.anthropic.com/v1/messages', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'x-api-key': safeApiKey,
-                'anthropic-version': '2023-06-01'
-            },
-            body: JSON.stringify({
-                model: safeModel,
-                max_tokens: 1400,
-                temperature: 0.2,
-                messages: [
-                    { role: 'user', content: prompt }
-                ]
-            })
-        });
-        if (!response.ok) {
-            throw await buildAlternativeLlmHttpError('Anthropic', response);
-        }
-        const data = await response.json();
-        const blocks = Array.isArray(data?.content) ? data.content : [];
-        return blocks.map(item => String(item?.text || '')).join('\n').trim();
-    }
-
-    throw new Error(t('Provider IA non supporté.', 'Proveedor IA no soportado.'));
-}
-
-async function testAlternativeLlmConnection({ provider = '', apiKey = '', model = '' } = {}) {
-    const safeProvider = String(provider || '').trim().toLowerCase();
-    const safeApiKey = sanitizeApiKey(apiKey);
-    const safeModel = String(model || '').trim();
-    const requiresApiKey = safeProvider === 'openai';
-    if (!safeProvider || !safeModel || (requiresApiKey && !safeApiKey)) {
-        throw new Error(t('Paramètres IA incomplets.', 'Parámetros IA incompletos.'));
-    }
-
-    if (safeProvider === 'openai') {
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${safeApiKey}`
-            },
-            body: JSON.stringify({
-                model: safeModel,
-                messages: [{ role: 'user', content: 'Ping' }],
-                max_tokens: 3,
-                temperature: 0
-            })
-        });
-        if (!response.ok) {
-            throw await buildAlternativeLlmHttpError('OpenAI', response);
-        }
-        return true;
-    }
-
-    if (safeProvider === 'anthropic') {
-        const proxyConfig = getAnthropicProxyConfig();
-        if (proxyConfig?.endpointUrl) {
-            const response = await fetch(proxyConfig.endpointUrl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'apikey': proxyConfig.anonKey,
-                    'Authorization': `Bearer ${proxyConfig.anonKey}`
-                },
-                body: JSON.stringify({
-                    model: safeModel,
-                    prompt: 'Ping',
-                    maxTokens: 8,
-                    temperature: 0,
-                    testOnly: true
-                })
-            });
-            if (!response.ok) {
-                throw await buildAlternativeLlmHttpError('Anthropic proxy', response);
-            }
-            return true;
-        }
-
-        if (isAnthropicDirectCallBlockedByBrowser()) {
-            throw new Error(t(
-                'Anthropic direct depuis navigateur bloqué (CORS). Configure un proxy Supabase Edge Function (anthropic-proxy).',
-                'Anthropic directo desde navegador bloqueado (CORS). Configura un proxy Supabase Edge Function (anthropic-proxy).'
-            ));
-        }
-        const response = await fetch('https://api.anthropic.com/v1/messages', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'x-api-key': safeApiKey,
-                'anthropic-version': '2023-06-01'
-            },
-            body: JSON.stringify({
-                model: safeModel,
-                max_tokens: 3,
-                temperature: 0,
-                messages: [{ role: 'user', content: 'Ping' }]
-            })
-        });
-        if (!response.ok) {
-            throw await buildAlternativeLlmHttpError('Anthropic', response);
-        }
-        return true;
-    }
-
-    throw new Error(t('Provider IA non supporté.', 'Proveedor IA no soportado.'));
-}
-
-function formatAlternativeLlmRuntimeError(error, provider) {
-    const raw = String(error?.message || error || '');
-    const normalizedProvider = String(provider || '').toLowerCase();
-    const failedFetch = /failed to fetch|networkerror|network error|load failed/i.test(raw);
-    if (failedFetch) {
-        if (normalizedProvider === 'anthropic') {
-            return t(
-                'Connexion impossible (navigateur/CORS). Anthropic bloque souvent les appels directs depuis une app web locale. Utilise un proxy backend (ex: Supabase Edge Function) ou OpenAI dans cette app.',
-                'Conexión imposible (navegador/CORS). Anthropic suele bloquear llamadas directas desde una app web local. Usa un proxy backend (ej: Supabase Edge Function) u OpenAI en esta app.'
-            );
-        }
-        return t(
-            'Connexion réseau impossible vers le provider IA (CORS/pare-feu/adblock).',
-            'Conexión de red imposible con el proveedor IA (CORS/firewall/adblock).'
-        );
-    }
-    return raw;
-}
-
-function sanitizeApiKey(rawValue) {
-    return String(rawValue || '')
-        .normalize('NFKC')
-        .replace(/[\u200B-\u200D\uFEFF]/g, '')
-        .replace(/[\u00A0\u202F]/g, ' ')
-        .replace(/[`'"“”‘’]/g, '')
-        .replace(/\s+/g, '')
-        .replace(/[^\x20-\x7E]/g, '')
-        .trim();
-}
-
-function isAnthropicDirectCallBlockedByBrowser() {
-    try {
-        const host = String(window?.location?.hostname || '').toLowerCase();
-        const protocol = String(window?.location?.protocol || '').toLowerCase();
-        if (!host) return false;
-        if (host.endsWith('github.io')) return true;
-        if (protocol === 'file:') return true;
-        return false;
-    } catch (_) {
-        return false;
-    }
-}
-
-function getAnthropicProxyConfig() {
-    const cloudUrl = String(document.getElementById('cloudUrlInput')?.value || '').trim();
-    const anonKey = String(document.getElementById('cloudAnonKeyInput')?.value || '').trim();
-    if (!cloudUrl || !anonKey) return null;
-    const baseUrl = cloudUrl.replace(/\/+$/, '');
-    return {
-        endpointUrl: `${baseUrl}/functions/v1/${ANTHROPIC_PROXY_FUNCTION_NAME}`,
-        anonKey
-    };
-}
-
-async function buildAlternativeLlmHttpError(providerLabel, response) {
-    const status = Number(response?.status || 0);
-    let details = '';
-
-    try {
-        const payload = await response.json();
-        details = String(
-            payload?.error?.message ||
-            payload?.message ||
-            payload?.detail ||
-            ''
-        ).trim();
-    } catch (_) {
-        try {
-            const text = String(await response.text()).trim();
-            details = text.slice(0, 220);
-        } catch (__){
-            details = '';
-        }
-    }
-
-    let hint = '';
-    if (status === 401) {
-        hint = t(
-            'clé invalide/expirée ou sans droit API; vérifie la clé complète et le projet API activé',
-            'clave inválida/caducada o sin permisos API; verifica clave completa y proyecto API activo'
-        );
-    } else if (status === 404) {
-        hint = t(
-            'modèle introuvable; vérifie le nom exact du modèle',
-            'modelo no encontrado; verifica el nombre exacto del modelo'
-        );
-    } else if (status === 429) {
-        hint = t(
-            'quota/limite atteinte; attends un peu ou augmente les quotas',
-            'cuota/límite alcanzado; espera o aumenta cuotas'
-        );
-    }
-
-    const parts = [`${providerLabel} ${status || ''}`.trim()];
-    if (details) parts.push(details);
-    if (hint) parts.push(hint);
-    return new Error(parts.join(' · '));
 }
 
 async function runTesseractRecognition(input) {
@@ -4946,17 +5261,19 @@ function setActiveMaintenanceAnnotation(annotationId) {
 }
 
 function setActiveMaintenanceSubtab(tabKey) {
-    activeMaintenanceSubtab = ['tasks', 'expenses', 'suppliers'].includes(tabKey) ? tabKey : 'tasks';
+    activeMaintenanceSubtab = ['tasks', 'expenses', 'suppliers', 'engine'].includes(tabKey) ? tabKey : 'tasks';
 
     const tabBtnMap = {
         tasks: document.getElementById('maintenanceTasksSubtabBtn'),
         expenses: document.getElementById('maintenanceExpensesSubtabBtn'),
-        suppliers: document.getElementById('maintenanceSuppliersSubtabBtn')
+        suppliers: document.getElementById('maintenanceSuppliersSubtabBtn'),
+        engine: document.getElementById('maintenanceEngineSubtabBtn')
     };
     const panelMap = {
         tasks: document.getElementById('maintenanceTasksPanel'),
         expenses: document.getElementById('maintenanceExpensesPanel'),
-        suppliers: document.getElementById('maintenanceSuppliersPanel')
+        suppliers: document.getElementById('maintenanceSuppliersPanel'),
+        engine: document.getElementById('engineTab')
     };
 
     Object.entries(tabBtnMap).forEach(([key, node]) => {
@@ -4969,7 +5286,25 @@ function setActiveMaintenanceSubtab(tabKey) {
         node.classList.toggle('active', key === activeMaintenanceSubtab);
     });
 
+    if (activeMaintenanceSubtab === 'expenses') {
+        setActiveMaintenanceExpensesView('list');
+    }
+
     window.dispatchEvent(new CustomEvent('ceibo:maintenance-subtab-changed'));
+}
+
+function setActiveMaintenanceExpensesView(viewKey) {
+    activeMaintenanceExpensesView = ['list', 'add'].includes(viewKey) ? viewKey : 'list';
+
+    const listBtn = document.getElementById('maintenanceExpenseListTabBtn');
+    const addBtn = document.getElementById('maintenanceExpenseAddTabBtn');
+    const listPanel = document.getElementById('maintenanceExpenseListPanel');
+    const addPanel = document.getElementById('maintenanceExpenseAddPanel');
+
+    if (listBtn) listBtn.classList.toggle('active', activeMaintenanceExpensesView === 'list');
+    if (addBtn) addBtn.classList.toggle('active', activeMaintenanceExpensesView === 'add');
+    if (listPanel) listPanel.classList.toggle('active', activeMaintenanceExpensesView === 'list');
+    if (addPanel) addPanel.classList.toggle('active', activeMaintenanceExpensesView === 'add');
 }
 
 function renderMaintenanceBoard() {
@@ -5167,6 +5502,9 @@ function initializeMaintenanceFeature() {
     const tasksSubtabBtn = document.getElementById('maintenanceTasksSubtabBtn');
     const expensesSubtabBtn = document.getElementById('maintenanceExpensesSubtabBtn');
     const suppliersSubtabBtn = document.getElementById('maintenanceSuppliersSubtabBtn');
+    const engineSubtabBtn = document.getElementById('maintenanceEngineSubtabBtn');
+    const expenseListTabBtn = document.getElementById('maintenanceExpenseListTabBtn');
+    const expenseAddTabBtn = document.getElementById('maintenanceExpenseAddTabBtn');
     const schemaNameInput = document.getElementById('maintenanceSchemaNameInput');
     const schemaInput = document.getElementById('maintenanceSchemaInput');
     const addBtn = document.getElementById('maintenanceAddSchemaBtn');
@@ -5186,15 +5524,11 @@ function initializeMaintenanceFeature() {
     const invoiceReviewPanel = document.getElementById('maintenanceInvoiceReviewPanel');
     const manualPasteTargetSelect = document.getElementById('maintenanceManualPasteTargetSelect');
     const pasteSelectedTextBtn = document.getElementById('maintenancePasteSelectedTextBtn');
-    const llmProviderSelect = document.getElementById('maintenanceLlmProviderSelect');
-    const llmApiKeyInput = document.getElementById('maintenanceLlmApiKeyInput');
-    const llmModelInput = document.getElementById('maintenanceLlmModelInput');
-    const testAltLlmBtn = document.getElementById('maintenanceTestAltLlmBtn');
-    const runAltLlmBtn = document.getElementById('maintenanceRunAltLlmBtn');
     const invoicePreviewImage = document.getElementById('maintenanceInvoicePreviewImage');
     const invoicePreviewPdfContainer = document.getElementById('maintenanceInvoicePreviewPdfContainer');
     const invoicePreviewPlaceholder = document.getElementById('maintenanceInvoicePreviewPlaceholder');
     const invoicePreviewTitle = document.getElementById('maintenanceInvoicePreviewTitle');
+    const maintenanceExpenseDetailPanel = document.getElementById('maintenanceExpenseDetailPanel');
     const expenseDateInput = document.getElementById('maintenanceExpenseDateInput');
     const expenseTotalInput = document.getElementById('maintenanceExpenseTotalInput');
     const expenseCurrencyInput = document.getElementById('maintenanceExpenseCurrencyInput');
@@ -5206,14 +5540,9 @@ function initializeMaintenanceFeature() {
     const expenseNoteInput = document.getElementById('maintenanceExpenseNoteInput');
     const expenseAiCommentInput = document.getElementById('maintenanceExpenseAiCommentInput');
     const addExpenseBtn = document.getElementById('maintenanceAddExpenseBtn');
-    const supplierNameInput = document.getElementById('maintenanceSupplierNameInput');
-    const supplierContactInput = document.getElementById('maintenanceSupplierContactInput');
-    const supplierPhoneInput = document.getElementById('maintenanceSupplierPhoneInput');
-    const supplierIbanInput = document.getElementById('maintenanceSupplierIbanInput');
-    const supplierNoteInput = document.getElementById('maintenanceSupplierNoteInput');
-    const addSupplierBtn = document.getElementById('maintenanceAddSupplierBtn');
+    const supplierNewBtn = document.getElementById('maintenanceSupplierNewBtn');
 
-    if (!tasksSubtabBtn || !expensesSubtabBtn || !suppliersSubtabBtn || !schemaNameInput || !schemaInput || !addBtn || !deleteBtn || !schemaSelect || !toggleSchemaManagerBtn || !pinColorInput || !taskStatusInput || !legendInput || !canvas || !image || !invoiceInput || !scanInvoiceBtn || !invoiceScanStatus || !expenseDateInput || !expenseTotalInput || !expenseCurrencyInput || !expensePayerSelect || !expensePaymentStatusSelect || !expenseSupplierInput || !expenseSupplierIbanInput || !expenseLinesInput || !expenseNoteInput || !expenseAiCommentInput || !addExpenseBtn || !supplierNameInput || !supplierContactInput || !supplierPhoneInput || !supplierIbanInput || !supplierNoteInput || !addSupplierBtn) return;
+    if (!tasksSubtabBtn || !expensesSubtabBtn || !suppliersSubtabBtn || !schemaNameInput || !schemaInput || !addBtn || !deleteBtn || !schemaSelect || !toggleSchemaManagerBtn || !pinColorInput || !taskStatusInput || !legendInput || !canvas || !image || !invoiceInput || !scanInvoiceBtn || !invoiceScanStatus || !expenseDateInput || !expenseTotalInput || !expenseCurrencyInput || !expensePayerSelect || !expensePaymentStatusSelect || !expenseSupplierInput || !expenseSupplierIbanInput || !expenseLinesInput || !expenseNoteInput || !expenseAiCommentInput || !addExpenseBtn) return;
 
     const applyClipboardTextToTarget = (text) => {
         const value = String(text || '').trim();
@@ -5222,26 +5551,10 @@ function initializeMaintenanceFeature() {
         const target = String(manualPasteTargetSelect?.value || 'expenseSupplier');
         if (target === 'expenseSupplier') {
             expenseSupplierInput.value = value;
-            supplierNameInput.value = value;
-            return true;
-        }
-        if (target === 'supplierContact') {
-            supplierContactInput.value = value;
-            return true;
-        }
-        if (target === 'supplierPhone') {
-            supplierPhoneInput.value = value;
-            return true;
-        }
-        if (target === 'supplierEmailToNote') {
-            const current = String(supplierNoteInput.value || '').trim();
-            const emailLine = `Email: ${value}`;
-            supplierNoteInput.value = current ? `${current}\n${emailLine}` : emailLine;
             return true;
         }
         if (target === 'expenseIban') {
             expenseSupplierIbanInput.value = normalizeIbanValue(value) || value;
-            supplierIbanInput.value = expenseSupplierIbanInput.value;
             return true;
         }
         if (target === 'expenseAmount') {
@@ -5265,6 +5578,9 @@ function initializeMaintenanceFeature() {
         if (!invoicePreviewImage || !invoicePreviewPdfContainer || !invoicePreviewPlaceholder || !invoicePreviewTitle) {
             return;
         }
+        if (maintenanceExpenseDetailPanel) {
+            maintenanceExpenseDetailPanel.style.display = 'none';
+        }
         if (maintenanceInvoicePreviewUrl) {
             URL.revokeObjectURL(maintenanceInvoicePreviewUrl);
             maintenanceInvoicePreviewUrl = '';
@@ -5276,8 +5592,7 @@ function initializeMaintenanceFeature() {
             invoicePreviewImage.removeAttribute('src');
             invoicePreviewPdfContainer.style.display = 'none';
             invoicePreviewPdfContainer.innerHTML = '';
-            invoicePreviewPlaceholder.style.display = 'flex';
-            invoicePreviewTitle.style.display = 'none';
+            renderMaintenanceExpenseDetailPanel();
             window.dispatchEvent(new CustomEvent('ceibo:maintenance-subtab-changed'));
             return;
         }
@@ -5308,56 +5623,25 @@ function initializeMaintenanceFeature() {
 
     invoiceInput.addEventListener('change', () => {
         const file = invoiceInput.files?.[0] || null;
+        if (file) {
+            selectedMaintenanceExpenseId = null;
+            renderMaintenanceExpenses();
+        }
         updateInvoicePreview(file);
         if (invoiceReviewPanel) {
             invoiceReviewPanel.style.display = file ? 'block' : 'none';
         }
     });
 
-    const defaultModelByProvider = {
-        openai: 'gpt-4o-mini',
-        anthropic: 'claude-3-5-haiku-latest'
-    };
-
-    if (llmProviderSelect && llmApiKeyInput && llmModelInput) {
-        llmProviderSelect.value = String(localStorage.getItem(MAINTENANCE_LLM_PROVIDER_STORAGE_KEY) || '');
-        llmApiKeyInput.value = String(localStorage.getItem(MAINTENANCE_LLM_API_KEY_STORAGE_KEY) || '');
-        llmModelInput.value = String(localStorage.getItem(MAINTENANCE_LLM_MODEL_STORAGE_KEY) || '');
-        if (!llmModelInput.value && defaultModelByProvider[llmProviderSelect.value]) {
-            llmModelInput.value = defaultModelByProvider[llmProviderSelect.value];
-        }
-
-        llmProviderSelect.addEventListener('change', () => {
-            const provider = String(llmProviderSelect.value || '');
-            localStorage.setItem(MAINTENANCE_LLM_PROVIDER_STORAGE_KEY, provider);
-            if (!llmModelInput.value && defaultModelByProvider[provider]) {
-                llmModelInput.value = defaultModelByProvider[provider];
-            }
-        });
-        llmApiKeyInput.addEventListener('change', () => {
-            const sanitized = sanitizeApiKey(llmApiKeyInput.value);
-            llmApiKeyInput.value = sanitized;
-            localStorage.setItem(MAINTENANCE_LLM_API_KEY_STORAGE_KEY, sanitized);
-        });
-        llmModelInput.addEventListener('change', () => {
-            localStorage.setItem(MAINTENANCE_LLM_MODEL_STORAGE_KEY, String(llmModelInput.value || '').trim());
-        });
-    }
-
     const applySupplierSelection = (name) => {
         const selectedName = String(name || '').trim();
         if (!selectedName) return;
         expenseSupplierInput.value = selectedName;
-        supplierNameInput.value = selectedName;
 
         const existingSupplier = findMaintenanceSupplierByName(selectedName);
         if (existingSupplier) {
-            supplierContactInput.value = existingSupplier.contact || '';
-            supplierPhoneInput.value = existingSupplier.emergencyPhone || '';
-            supplierNoteInput.value = existingSupplier.note || '';
             if (existingSupplier.iban) {
                 expenseSupplierIbanInput.value = existingSupplier.iban;
-                supplierIbanInput.value = existingSupplier.iban;
             }
         }
     };
@@ -5399,6 +5683,7 @@ function initializeMaintenanceFeature() {
     expenseDateInput.value = new Date().toISOString().slice(0, 10);
     setMaintenanceSchemaManagerVisibility(false);
     setActiveMaintenanceSubtab('tasks');
+    setActiveMaintenanceExpensesView('list');
 
     loadMaintenanceBoards();
     loadMaintenanceExpenses();
@@ -5413,6 +5698,15 @@ function initializeMaintenanceFeature() {
     tasksSubtabBtn.addEventListener('click', () => setActiveMaintenanceSubtab('tasks'));
     expensesSubtabBtn.addEventListener('click', () => setActiveMaintenanceSubtab('expenses'));
     suppliersSubtabBtn.addEventListener('click', () => setActiveMaintenanceSubtab('suppliers'));
+    if (engineSubtabBtn) {
+        engineSubtabBtn.addEventListener('click', () => setActiveMaintenanceSubtab('engine'));
+    }
+    if (expenseListTabBtn) {
+        expenseListTabBtn.addEventListener('click', () => setActiveMaintenanceExpensesView('list'));
+    }
+    if (expenseAddTabBtn) {
+        expenseAddTabBtn.addEventListener('click', () => setActiveMaintenanceExpensesView('add'));
+    }
 
     toggleSchemaManagerBtn.addEventListener('click', () => {
         setMaintenanceSchemaManagerVisibility(!maintenanceSchemaManagerVisible);
@@ -5551,10 +5845,8 @@ function initializeMaintenanceFeature() {
                 if (knownIban && scannedIban && knownIban !== scannedIban) {
                     ibanConflictDetected = true;
                     expenseSupplierIbanInput.value = matchedSupplier.iban;
-                    supplierIbanInput.value = matchedSupplier.iban;
                 } else {
                     expenseSupplierIbanInput.value = iban;
-                    supplierIbanInput.value = iban;
                 }
             }
             if (Number.isFinite(total) && total > 0) {
@@ -5562,12 +5854,8 @@ function initializeMaintenanceFeature() {
             }
 
             if (hasReliableSupplier && matchedSupplier) {
-                supplierContactInput.value = matchedSupplier.contact || '';
-                supplierPhoneInput.value = matchedSupplier.emergencyPhone || '';
-                supplierNoteInput.value = matchedSupplier.note || '';
                 if (!iban && matchedSupplier.iban) {
                     expenseSupplierIbanInput.value = matchedSupplier.iban;
-                    supplierIbanInput.value = matchedSupplier.iban;
                     }
             }
 
@@ -5585,13 +5873,6 @@ function initializeMaintenanceFeature() {
             if (candidateLines.length && !expenseLinesInput.value.trim()) {
                 expenseLinesInput.value = candidateLines.join('\n');
             }
-
-            const autoComment = buildExpensePreventionComment({
-                supplierName: supplier,
-                totalAmount: total,
-                detectedLines: analysisLines
-            });
-            expenseAiCommentInput.value = autoComment;
 
             const summaryParts = [];
             if (supplier) {
@@ -5642,106 +5923,43 @@ function initializeMaintenanceFeature() {
         });
     }
 
-    if (runAltLlmBtn && llmProviderSelect && llmApiKeyInput && llmModelInput) {
-        runAltLlmBtn.addEventListener('click', async () => {
-        const provider = String(llmProviderSelect.value || '').trim();
-        const apiKey = sanitizeApiKey(llmApiKeyInput.value);
-        const model = String(llmModelInput.value || '').trim();
-            if (!provider || !model || (provider === 'openai' && !apiKey)) {
-            invoiceScanStatus.textContent = t('Configure provider, API key et model.', 'Configura proveedor, clave API y modelo.');
-            return;
-        }
-
-        llmApiKeyInput.value = apiKey;
-
-        localStorage.setItem(MAINTENANCE_LLM_PROVIDER_STORAGE_KEY, provider);
-        localStorage.setItem(MAINTENANCE_LLM_API_KEY_STORAGE_KEY, apiKey);
-        localStorage.setItem(MAINTENANCE_LLM_MODEL_STORAGE_KEY, model);
-
-        const totalValue = toFiniteAmount(expenseTotalInput.value);
-        const prompt = buildAlternativeLlmPrompt({
-            supplierName: expenseSupplierInput.value,
-            invoiceDate: expenseDateInput.value,
-            iban: expenseSupplierIbanInput.value,
-            totalAmount: Number.isFinite(totalValue) ? totalValue : null,
-            currency: expenseCurrencyInput.value,
-            rawText: maintenanceLastScannedText
-        });
-
-        try {
-            invoiceScanStatus.textContent = t('Analyse IA en cours...', 'Análisis IA en curso...');
-            const analysis = await requestAlternativeLlmAnalysis({ provider, apiKey, model, prompt });
-            if (!analysis) {
-                invoiceScanStatus.textContent = t('IA: réponse vide.', 'IA: respuesta vacía.');
-                return;
-            }
-            expenseAiCommentInput.value = analysis;
-            invoiceScanStatus.textContent = t('Analyse IA injectée dans commentaire IA.', 'Análisis IA insertado en comentario IA.');
-        } catch (error) {
-            const errorMessage = String(error?.message || error);
-            const isQuotaError = /\b429\b/.test(errorMessage) || /quota|rate limit|too many requests/i.test(errorMessage);
-            if (isQuotaError) {
-                const amount = toFiniteAmount(expenseTotalInput.value);
-                const detectedLines = String(maintenanceLastScannedText || '')
-                    .split(/\r?\n/)
-                    .map(line => line.trim())
-                    .filter(Boolean)
-                    .slice(0, 30);
-                expenseAiCommentInput.value = buildExpensePreventionComment({
-                    supplierName: expenseSupplierInput.value,
-                    totalAmount: Number.isFinite(amount) ? amount : null,
-                    detectedLines
-                });
-                invoiceScanStatus.textContent = t(
-                    'Quota IA atteint: analyse locale de secours injectée dans commentaire IA.',
-                    'Cuota IA alcanzada: análisis local de respaldo insertado en comentario IA.'
-                );
-                return;
-            }
-            const readableError = formatAlternativeLlmRuntimeError(error, provider);
-            invoiceScanStatus.textContent = `${t('Échec analyse IA', 'Error análisis IA')}: ${readableError}`;
-        }
-        });
-    }
-
-    if (testAltLlmBtn && llmProviderSelect && llmApiKeyInput && llmModelInput) {
-        testAltLlmBtn.addEventListener('click', async () => {
-        const provider = String(llmProviderSelect.value || '').trim();
-        const apiKey = sanitizeApiKey(llmApiKeyInput.value);
-        const model = String(llmModelInput.value || '').trim();
-            if (!provider || !model || (provider === 'openai' && !apiKey)) {
-            invoiceScanStatus.textContent = t('Configure provider, API key et model.', 'Configura proveedor, clave API y modelo.');
-            return;
-        }
-
-        llmApiKeyInput.value = apiKey;
-
-        localStorage.setItem(MAINTENANCE_LLM_PROVIDER_STORAGE_KEY, provider);
-        localStorage.setItem(MAINTENANCE_LLM_API_KEY_STORAGE_KEY, apiKey);
-        localStorage.setItem(MAINTENANCE_LLM_MODEL_STORAGE_KEY, model);
-
-        try {
-            invoiceScanStatus.textContent = t('Test connexion API en cours...', 'Prueba conexión API en curso...');
-            await testAlternativeLlmConnection({ provider, apiKey, model });
-            invoiceScanStatus.textContent = t('Connexion API OK ✅', 'Conexión API OK ✅');
-        } catch (error) {
-            const readableError = formatAlternativeLlmRuntimeError(error, provider);
-            invoiceScanStatus.textContent = `${t('Test API échoué', 'Prueba API fallida')}: ${readableError}`;
-        }
-        });
-    }
-
-    addExpenseBtn.addEventListener('click', () => {
+    addExpenseBtn.addEventListener('click', async () => {
         const totalAmount = toFiniteAmount(expenseTotalInput.value);
         if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
             invoiceScanStatus.textContent = t('Renseigne un montant total valide.', 'Introduce un importe total válido.');
             return;
         }
 
+        const invoiceFiles = Array.from(invoiceInput.files || []);
+        const invoiceDocuments = [];
+
+        for (let fileIndex = 0; fileIndex < invoiceFiles.length; fileIndex++) {
+            const file = invoiceFiles[fileIndex];
+            try {
+                const dataUrl = await imageFileToDataUrl(file);
+                invoiceDocuments.push(sanitizeMaintenanceInvoiceDocument({
+                    id: `expense-doc-${Date.now()}-${fileIndex}`,
+                    name: file.name,
+                    dataUrl,
+                    mimeType: file.type,
+                    sizeBytes: file.size
+                }, fileIndex));
+            } catch (_error) {
+                invoiceScanStatus.textContent = `${t('Impossible de lire le document', 'No se puede leer el documento')}: ${file.name}`;
+                return;
+            }
+        }
+
+        const firstInvoiceDocument = invoiceDocuments[0] || null;
+
         const lines = parseExpenseLinesText(expenseLinesInput.value);
         const entry = sanitizeMaintenanceExpense({
             id: `expense-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-            invoiceName: invoiceInput.files?.[0]?.name || '',
+            invoiceName: firstInvoiceDocument?.name || '',
+            invoiceDataUrl: firstInvoiceDocument?.dataUrl || '',
+            invoiceMimeType: firstInvoiceDocument?.mimeType || '',
+            invoiceSizeBytes: firstInvoiceDocument?.sizeBytes || 0,
+            invoiceDocuments,
             date: expenseDateInput.value || new Date().toISOString().slice(0, 10),
             supplierName: expenseSupplierInput.value,
             supplierIban: expenseSupplierIbanInput.value,
@@ -5757,8 +5975,10 @@ function initializeMaintenanceFeature() {
         }, maintenanceExpenses.length);
 
         maintenanceExpenses.unshift(entry);
+        selectedMaintenanceExpenseId = entry.id;
         persistMaintenanceExpenses();
         renderMaintenanceExpenses();
+        setActiveMaintenanceExpensesView('list');
 
         expenseTotalInput.value = '';
         expenseLinesInput.value = '';
@@ -5771,42 +5991,24 @@ function initializeMaintenanceFeature() {
         }
         updateInvoicePreview(null);
         renderSupplierSuggestions([]);
-        invoiceScanStatus.textContent = t('Dépense ajoutée.', 'Gasto añadido.');
-    });
-
-    addSupplierBtn.addEventListener('click', () => {
-        const name = String(supplierNameInput.value || '').trim();
-        if (!name) {
-            return;
-        }
-
-        const entry = sanitizeMaintenanceSupplier({
-            id: `supplier-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-            name,
-            contact: supplierContactInput.value,
-            emergencyPhone: supplierPhoneInput.value,
-            iban: supplierIbanInput.value,
-            note: supplierNoteInput.value,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-        }, maintenanceSuppliers.length);
-
-        const existingIndex = maintenanceSuppliers.findIndex(item => item.name.toLowerCase() === entry.name.toLowerCase());
-        if (existingIndex >= 0) {
-            maintenanceSuppliers[existingIndex] = entry;
+        if (invoiceDocuments.length > 1) {
+            invoiceScanStatus.textContent = t(
+                `Dépense ajoutée. ${invoiceDocuments.length} documents archivés.`,
+                `Gasto añadido. ${invoiceDocuments.length} documentos archivados.`
+            );
+        } else if (invoiceDocuments.length === 1) {
+            invoiceScanStatus.textContent = t('Dépense ajoutée. Facture archivée avec succès.', 'Gasto añadido. Factura archivada con éxito.');
         } else {
-            maintenanceSuppliers.push(entry);
+            invoiceScanStatus.textContent = t('Dépense ajoutée.', 'Gasto añadido.');
         }
-
-        persistMaintenanceSuppliers();
-        renderMaintenanceSuppliers();
-
-        supplierNameInput.value = '';
-        supplierContactInput.value = '';
-        supplierPhoneInput.value = '';
-        supplierIbanInput.value = '';
-        supplierNoteInput.value = '';
     });
+
+    if (supplierNewBtn) {
+        supplierNewBtn.addEventListener('click', () => {
+            selectedMaintenanceSupplierId = null;
+            renderMaintenanceSuppliers();
+        });
+    }
 }
 
 function setCloudAuthStatus(message, isError = false) {
@@ -6556,6 +6758,13 @@ async function refreshWeatherOutlook({ forceMapCenter = false } = {}) {
 // =====================
 
 document.addEventListener('DOMContentLoaded', async function() {
+    document.title = `Gestion du CEIBO · v${APP_BUILD_VERSION}`;
+    const buildVersionBadge = document.getElementById('buildVersionBadge');
+    if (buildVersionBadge) {
+        buildVersionBadge.textContent = `v${APP_BUILD_VERSION}`;
+    }
+    console.info(`[CEIBO] Front build ${APP_BUILD_VERSION}`);
+
     const savedMapView = loadSavedMapView();
     const initialLat = savedMapView?.lat ?? 41.3851;
     const initialLng = savedMapView?.lng ?? 2.1734;
@@ -6664,7 +6873,6 @@ document.addEventListener('DOMContentLoaded', async function() {
     const routesTabBtn = document.getElementById('routesTabBtn');
     const cloudTabBtn = document.getElementById('cloudTabBtn');
     const navLogTabBtn = document.getElementById('navLogTabBtn');
-    const engineTabBtn = document.getElementById('engineTabBtn');
     const weatherTabBtn = document.getElementById('weatherTabBtn');
     const arrivalTabBtn = document.getElementById('arrivalTabBtn');
     const waypointTabBtn = document.getElementById('waypointTabBtn');
@@ -6673,7 +6881,6 @@ document.addEventListener('DOMContentLoaded', async function() {
     const routesTab = document.getElementById('routesTab');
     const cloudTab = document.getElementById('cloudTab');
     const navLogTab = document.getElementById('navLogTab');
-    const engineTab = document.getElementById('engineTab');
     const weatherTab = document.getElementById('weatherTab');
     const arrivalTab = document.getElementById('arrivalTab');
     const waypointTab = document.getElementById('waypointTab');
@@ -6684,7 +6891,7 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     function setMaintenanceMapMode(enabled) {
         const shouldShowMaintenanceCanvas = enabled && activeMaintenanceSubtab === 'tasks';
-        const shouldShowInvoicePreview = enabled && activeMaintenanceSubtab === 'expenses' && !!maintenanceInvoicePreviewUrl;
+        const shouldShowInvoicePreview = enabled && (activeMaintenanceSubtab === 'expenses' || activeMaintenanceSubtab === 'suppliers');
         const shouldHideMap = shouldShowMaintenanceCanvas || shouldShowInvoicePreview;
 
         if (mapContainer) {
@@ -6700,6 +6907,14 @@ document.addEventListener('DOMContentLoaded', async function() {
         if (shouldShowMaintenanceCanvas) {
             renderMaintenanceBoard();
             return;
+        }
+
+        if (shouldShowInvoicePreview) {
+            if (activeMaintenanceSubtab === 'suppliers') {
+                renderMaintenanceSupplierDetailPanel();
+            } else {
+                renderMaintenanceExpenseDetailPanel();
+            }
         }
 
         window.setTimeout(() => {
@@ -6724,7 +6939,6 @@ document.addEventListener('DOMContentLoaded', async function() {
         const isRoutes = tabName === 'routes';
         const isCloud = tabName === 'cloud';
         const isNavLog = tabName === 'navlog';
-        const isEngine = tabName === 'engine';
         const isWeather = tabName === 'weather';
         const isArrival = tabName === 'arrival';
         const isWaypoint = tabName === 'waypoint';
@@ -6734,7 +6948,6 @@ document.addEventListener('DOMContentLoaded', async function() {
         routesTabBtn.classList.toggle('active', isRoutes);
         cloudTabBtn.classList.toggle('active', isCloud);
         navLogTabBtn.classList.toggle('active', isNavLog);
-        engineTabBtn.classList.toggle('active', isEngine);
         weatherTabBtn.classList.toggle('active', isWeather);
         arrivalTabBtn.classList.toggle('active', isArrival);
         waypointTabBtn.classList.toggle('active', isWaypoint);
@@ -6744,7 +6957,6 @@ document.addEventListener('DOMContentLoaded', async function() {
         routesTab.classList.toggle('active', isRoutes);
         cloudTab.classList.toggle('active', isCloud);
         navLogTab.classList.toggle('active', isNavLog);
-        engineTab.classList.toggle('active', isEngine);
         weatherTab.classList.toggle('active', isWeather);
         arrivalTab.classList.toggle('active', isArrival);
         waypointTab.classList.toggle('active', isWaypoint);
@@ -6764,7 +6976,6 @@ document.addEventListener('DOMContentLoaded', async function() {
     routesTabBtn.addEventListener('click', () => activateTab('routes'));
     cloudTabBtn.addEventListener('click', () => activateTab('cloud'));
     navLogTabBtn.addEventListener('click', () => activateTab('navlog'));
-    engineTabBtn.addEventListener('click', () => activateTab('engine'));
     weatherTabBtn.addEventListener('click', () => activateTab('weather'));
     arrivalTabBtn.addEventListener('click', () => activateTab('arrival'));
     waypointTabBtn.addEventListener('click', () => activateTab('waypoint'));
@@ -8605,7 +8816,9 @@ async function autoPullRoutesFromCloud(trigger = 'auto') {
     cloudAutoPullInFlight = true;
 
     try {
-        const routes = await pullRoutesFromCloud();
+        const routes = await pullRoutesFromCloud({
+            allowMaintenanceOverwrite: trigger === 'manual'
+        });
         refreshSavedList();
         if (trigger !== 'silent') {
             setCloudStatus(t(`Cloud synchro auto · ${routes.length} route(s)`, `Nube sincronización auto · ${routes.length} ruta(s)`));
@@ -8633,20 +8846,23 @@ function startCloudAutoSync() {
     }, CLOUD_AUTO_PULL_INTERVAL_MS);
 }
 
-async function pullRoutesFromCloud() {
+async function pullRoutesFromCloud(options = {}) {
     if (!isCloudReady()) return getSavedRoutes();
+
+    const allowMaintenanceOverwrite = options.allowMaintenanceOverwrite === true;
 
     const localRoutesBeforePull = [...getSavedRoutes()];
 
     const { data, error } = await cloudClient
         .from(CLOUD_TABLE_NAME)
-        .select('routes')
+        .select('routes,updated_at')
         .eq('project_key', cloudConfig.projectKey)
         .maybeSingle();
 
     if (error) throw error;
 
     const rawPayload = data?.routes;
+    const cloudUpdatedAtMs = Date.parse(String(data?.updated_at || ''));
     const hasCloudPayload = rawPayload !== undefined && rawPayload !== null;
 
     if (!hasCloudPayload) {
@@ -8681,15 +8897,26 @@ async function pullRoutesFromCloud() {
         setWaypointPhotoEntries(rawWaypointPhotos, { persistLocal: true, refreshUi: true });
     }
 
-    if (Array.isArray(rawMaintenanceBoards)) {
+    if (allowMaintenanceOverwrite && Array.isArray(rawMaintenanceBoards)) {
         setMaintenanceBoards(rawMaintenanceBoards, { persistLocal: true, refreshUi: true, syncCloud: false });
     }
 
-    if (Array.isArray(rawMaintenanceExpenses)) {
-        setMaintenanceExpenses(rawMaintenanceExpenses, { persistLocal: true, refreshUi: true, syncCloud: false });
+    if (allowMaintenanceOverwrite && Array.isArray(rawMaintenanceExpenses)) {
+        const cloudIsAtLeastAsRecentAsLocal = Number.isFinite(cloudUpdatedAtMs)
+            ? cloudUpdatedAtMs >= maintenanceExpensesLastLocalMutationAt
+            : false;
+        const shouldKeepLocalExpenses = (maintenanceExpensesCloudDirty || maintenanceExpensesSyncInFlight || maintenanceExpensesLocalStorageFailed)
+            && !cloudIsAtLeastAsRecentAsLocal;
+
+        if (!shouldKeepLocalExpenses) {
+            setMaintenanceExpenses(rawMaintenanceExpenses, { persistLocal: true, refreshUi: true, syncCloud: false });
+            if (cloudIsAtLeastAsRecentAsLocal) {
+                maintenanceExpensesCloudDirty = false;
+            }
+        }
     }
 
-    if (Array.isArray(rawMaintenanceSuppliers)) {
+    if (allowMaintenanceOverwrite && Array.isArray(rawMaintenanceSuppliers)) {
         setMaintenanceSuppliers(rawMaintenanceSuppliers, { persistLocal: true, refreshUi: true, syncCloud: false });
     }
 
@@ -8807,7 +9034,7 @@ async function connectCloud(config, { silent = false } = {}) {
         startCloudAutoSync();
 
         if (isCloudReady()) {
-            const routes = await pullRoutesFromCloud();
+            const routes = await pullRoutesFromCloud({ allowMaintenanceOverwrite: false });
             refreshSavedList();
             setCloudStatus(t(`Cloud connecté · ${routes.length} route(s) partagée(s)`, `Nube conectada · ${routes.length} ruta(s) compartida(s)`));
         } else {
