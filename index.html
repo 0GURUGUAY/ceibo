@@ -23,13 +23,16 @@
         <button id="cloudTabBtn" class="tab-btn active" type="button">Cloud</button>
         <button id="routesTabBtn" class="tab-btn" type="button">Routes</button>
         <button id="routingTabBtn" class="tab-btn" type="button">Routage</button>
+        <button id="navLogTabBtn" class="tab-btn" type="button">Journal nav</button>
+        <button id="engineTabBtn" class="tab-btn" type="button">Moteur</button>
+        <button id="weatherTabBtn" class="tab-btn" type="button">Météo</button>
         <button id="arrivalTabBtn" class="tab-btn" type="button">Arrivée</button>
         <button id="waypointTabBtn" class="tab-btn" type="button">Waypoint</button>
     </div>
 
     <div id="routingTab" class="tab-panel">
         <label for="departureDateTimeInput" style="display: block; margin-top: 10px; font-size: 12px;">Départ (date + heure):</label>
-        <input type="datetime-local" id="departureDateTimeInput" step="3600" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
+        <input type="datetime-local" id="departureDateTimeInput" step="600" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
 
         <div class="routing-control-grid">
             <div class="routing-control-item">
@@ -80,6 +83,9 @@
 
         <button id="suggestDepartureBtn" style="margin-top:8px;">Conseiller départ météo (≤ 20 kn)</button>
         <div id="departureSuggestionInfo" style="margin-top:6px; font-size:12px; opacity:0.9;">Suggestion départ: en attente</div>
+        <button id="suggestAiRoutesBtn" style="margin-top:8px;">Proposer routes IA (safe / perf)</button>
+        <div id="aiRouteSuggestionInfo" style="margin-top:6px; font-size:12px; opacity:0.9;">Routes IA: en attente</div>
+        <div id="aiRouteSuggestions"></div>
 
         <div class="button-row">
                 <button id="computeBtn" style="flex:1;">Calculer</button>
@@ -129,15 +135,130 @@
             <input type="hidden" id="cloudUrlInput" value="https://wtavqhpntfnsklbniqzf.supabase.co">
             <input type="hidden" id="cloudAnonKeyInput" value="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind0YXZxaHBudGZuc2tsYm5pcXpmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI2NjkwNzMsImV4cCI6MjA4ODI0NTA3M30.v4T63RWtSjCHBGM5y4nFKdONpteviLSer-P_8vWAY68">
             <input type="hidden" id="cloudProjectKeyInput" value="ceibo-main">
-            <input type="hidden" id="cloudPasswordPreset" value="Ceibo1">
-            <input type="password" id="cloudPasswordInput" placeholder="Mot de passe cloud" class="cloud-input">
             <div class="button-row">
-                <button id="cloudConnectBtn" style="flex:1;">Connecter cloud</button>
                 <button id="cloudRefreshBtn" style="flex:1;">Rafraîchir cloud</button>
             </div>
+            <div class="cloud-config-title" style="margin-top:10px;">Compte utilisateur (Email + mot de passe)</div>
+            <input type="email" id="cloudEmailInput" placeholder="Email utilisateur" class="cloud-input" autocomplete="username">
+            <input type="password" id="cloudUserPasswordInput" placeholder="Mot de passe utilisateur" class="cloud-input" autocomplete="current-password">
+            <div class="button-row">
+                <button id="cloudEmailSignInBtn" style="flex:1;">Se connecter email</button>
+                <button id="cloudEmailSignUpBtn" style="flex:1;">Créer compte</button>
+            </div>
+            <div class="button-row">
+                <button id="cloudSignOutBtn" style="flex:1;">Se déconnecter</button>
+            </div>
+            <div id="cloudAuthStatus" class="cloud-status">Utilisateur: non connecté</div>
             <div id="cloudStatus" class="cloud-status">Mode local (pas de cloud configuré)</div>
             <div class="cloud-status">Routes + photos waypoint: synchronisation cloud automatique.</div>
         </div>
+    </div>
+
+    <div id="navLogTab" class="tab-panel">
+        <div class="button-row">
+            <button id="startNavLogBtn" style="flex:1;">Démarrer log GPS</button>
+            <button id="stopNavLogBtn" style="flex:1;">Arrêter log GPS</button>
+        </div>
+        <div class="button-row">
+            <button id="requestMotionPermissionBtn" style="flex:1;">Activer capteur inclinaison</button>
+            <button id="clearNavLogBtn" style="flex:1;">Effacer journal nav</button>
+        </div>
+        <div id="navLogStatus" style="margin-top:6px; font-size:12px; opacity:0.9;">Journal navigation: en attente</div>
+
+        <label for="watchTimeInput" style="display:block; margin-top:10px; font-size:12px;">Heure du quart:</label>
+        <input type="datetime-local" id="watchTimeInput" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
+
+        <div class="routing-control-grid">
+            <div class="routing-control-item">
+                <label for="watchCrewInput">Équipage / quart:</label>
+                <input type="text" id="watchCrewInput" placeholder="Ex: Max + Ana" style="width:100%; padding:8px; box-sizing:border-box;">
+            </div>
+            <div class="routing-control-item">
+                <label for="watchHeadingInput">Cap compas (°):</label>
+                <input type="number" id="watchHeadingInput" min="0" max="359" placeholder="Ex: 235" style="width:100%; padding:8px; box-sizing:border-box;">
+            </div>
+            <div class="routing-control-item">
+                <label for="watchWindDirInput">Vent direction (°):</label>
+                <input type="number" id="watchWindDirInput" min="0" max="359" placeholder="Ex: 260" style="width:100%; padding:8px; box-sizing:border-box;">
+            </div>
+            <div class="routing-control-item">
+                <label for="watchWindSpeedInput">Vent force (kn):</label>
+                <input type="number" id="watchWindSpeedInput" step="0.1" min="0" placeholder="Ex: 16.5" style="width:100%; padding:8px; box-sizing:border-box;">
+            </div>
+            <div class="routing-control-item">
+                <label for="watchSeaStateInput">État de mer:</label>
+                <select id="watchSeaStateInput">
+                    <option value="calme">Calme</option>
+                    <option value="peu agitée">Peu agitée</option>
+                    <option value="agitée">Agitée</option>
+                    <option value="forte">Forte</option>
+                </select>
+            </div>
+            <div class="routing-control-item">
+                <label for="watchSailConfigInput">Voilure:</label>
+                <input type="text" id="watchSailConfigInput" placeholder="Ex: GV 1 ris + génois" style="width:100%; padding:8px; box-sizing:border-box;">
+            </div>
+            <div class="routing-control-item">
+                <label for="watchBarometerInput">Baromètre (hPa):</label>
+                <input type="number" id="watchBarometerInput" step="0.1" placeholder="Ex: 1014.8" style="width:100%; padding:8px; box-sizing:border-box;">
+            </div>
+            <div class="routing-control-item">
+                <label for="watchLogNmInput">Loch total (NM):</label>
+                <input type="number" id="watchLogNmInput" step="0.1" min="0" placeholder="Ex: 842.3" style="width:100%; padding:8px; box-sizing:border-box;">
+            </div>
+        </div>
+
+        <label for="watchEventsInput" style="display:block; margin-top:10px; font-size:12px;">Événements / manœuvres:</label>
+        <textarea id="watchEventsInput" rows="3" placeholder="Changement de voile, prise de ris, trafic, sécurité, etc." style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;"></textarea>
+
+        <div class="button-row">
+            <button id="addManualNavLogBtn" style="flex:1;">Ajouter entrée jour de bord</button>
+        </div>
+
+        <canvas id="heelSpeedChart" width="520" height="180" style="width:100%; margin-top:8px; background: rgba(255,255,255,0.05); border-radius:8px; border:1px solid rgba(255,255,255,0.14);"></canvas>
+        <label style="display:block; margin-top:12px; font-size:12px;">Entrées navigation:</label>
+        <div id="navLogList"></div>
+    </div>
+
+    <div id="engineTab" class="tab-panel">
+        <label for="engineHoursInput" style="display:block; margin-top:10px; font-size:12px;">Compteur moteur (h):</label>
+        <input type="number" id="engineHoursInput" step="0.1" placeholder="Ex: 1250.4" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
+
+        <label for="fuelAddedInput" style="display:block; margin-top:10px; font-size:12px;">Carburant ajouté (L):</label>
+        <input type="number" id="fuelAddedInput" step="0.1" placeholder="Ex: 35" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
+
+        <label for="engineLogNoteInput" style="display:block; margin-top:10px; font-size:12px;">Note:</label>
+        <textarea id="engineLogNoteInput" rows="3" placeholder="Maintenance, bruit, filtre, etc." style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;"></textarea>
+
+        <div class="button-row">
+            <button id="saveEngineLogBtn" style="flex:1;">Ajouter entrée moteur</button>
+            <button id="clearEngineLogBtn" style="flex:1;">Effacer livre moteur</button>
+        </div>
+
+        <label style="display:block; margin-top:12px; font-size:12px;">Historique moteur:</label>
+        <div id="engineLogList"></div>
+    </div>
+
+    <div id="weatherTab" class="tab-panel">
+        <div class="button-row">
+            <button id="placeWeatherPointerBtn" style="flex:1;">Placer pointeur météo</button>
+            <button id="useMapCenterWeatherBtn" style="flex:1;">Centre carte → pointeur</button>
+        </div>
+        <div class="button-row">
+            <button id="refreshWeatherOutlookBtn" style="flex:1;">Actualiser météo</button>
+        </div>
+        <label for="owmApiKeyInput" style="display:block; margin-top:10px; font-size:12px;">Clé API OpenWeatherMap (isobares):</label>
+        <input type="password" id="owmApiKeyInput" placeholder="Ta clé OWM" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
+        <div class="button-row">
+            <button id="testOwmApiKeyBtn" style="flex:1;">Tester clé OWM</button>
+        </div>
+        <div class="button-row">
+            <button id="saveOwmApiKeyBtn" style="flex:1;">Enregistrer clé OWM</button>
+            <button id="clearOwmApiKeyBtn" style="flex:1;">Supprimer clé OWM</button>
+        </div>
+        <div id="owmApiKeyStatus" style="margin-top:6px; font-size:12px; opacity:0.9;">Clé OWM: non testée</div>
+        <div id="weatherOutlookStatus" style="margin-top:6px; font-size:12px; opacity:0.9;">Météo: en attente</div>
+        <div id="weatherOutlookList"></div>
     </div>
 
     <div id="arrivalTab" class="tab-panel">
@@ -235,12 +356,22 @@
     </div>
 
     <div class="sidebar-footer">
-        <span class="creator-credit">programa creado por max patissier</span>
+        <span class="creator-credit">Programa creado por Max Patissier</span>
         <a id="helpFab" href="help.html" target="_blank" rel="noopener" title="Ayuda">❓ HELP</a>
     </div>
 </div>
 
 <div id="map"></div>
+
+<div id="aiTrafficOverlay" class="ai-traffic-overlay" style="display:none;">
+    <div class="ai-traffic-window">
+        <div class="ai-traffic-header">
+            <strong>Trafic modèle en cours</strong>
+            <button id="aiTrafficCloseBtn" type="button">Fermer</button>
+        </div>
+        <div id="aiTrafficList" class="ai-traffic-list"></div>
+    </div>
+</div>
 
 <script type="module" src="app.js"></script>
 

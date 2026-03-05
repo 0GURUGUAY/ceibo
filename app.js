@@ -10,8 +10,12 @@ L.Icon.Default.mergeOptions({
 });
 
 let map;
+let activeTabName = 'cloud';
 let standardTileLayer;
 let satelliteTileLayer;
+let marineDepthLayer;
+let marineHazardLayer;
+let isobarLayer;
 let activeBaseLayer;
 let baseLayerControl;
 let routePoints = [];
@@ -65,19 +69,42 @@ const OVERPASS_429_COOLDOWN_MS = 10 * 60 * 1000;
 const WAYPOINT_PHOTOS_STORAGE_KEY = 'ceiboWaypointPhotos';
 const SAVED_ROUTES_STORAGE_KEY = 'savedRoutes';
 const CLOUD_CONFIG_STORAGE_KEY = 'ceiboCloudConfigV1';
+const NAV_LOG_STORAGE_KEY = 'ceiboNavLogV1';
+const ENGINE_LOG_STORAGE_KEY = 'ceiboEngineLogV1';
 const CLOUD_TABLE_NAME = 'ceibo_route_collections';
+const CLOUD_ALLOWED_USERS_TABLE = 'allowed_users';
 const CLOUD_AUTO_PULL_INTERVAL_MS = 45000;
+const CLOUD_LOGBOOK_PUSH_DEBOUNCE_MS = 12000;
 let savedRoutesCache = [];
 let cloudClient = null;
 let cloudConfig = null;
 let cloudConnected = false;
+let cloudAuthUser = null;
+let cloudAuthSubscription = null;
 let cloudAutoPullTimer = null;
 let cloudAutoPullInFlight = false;
+let cloudLogbookPushTimer = null;
+let cloudWhitelistCheckInFlight = false;
+let navLogEntries = [];
+let navWatchId = null;
+let navLatestHeelDeg = null;
+let navLatestSpeedKn = null;
+let navMotionListenerBound = false;
+let engineLogEntries = [];
+let lastAiRouteCandidates = [];
+let aiTrafficEntries = [];
+let aiTrafficAutoHideTimer = null;
+let weatherFocusMarker = null;
+let weatherFocusPoint = null;
+let weatherPointerPlacementMode = false;
 let overpassLastRequestAt = 0;
 const overpassQueryCache = new Map();
 const overpassEndpointCooldownUntil = new Map();
 let overpassPreferredEndpoint = OVERPASS_URLS[0];
 const MAP_STYLE_STORAGE_KEY = 'ceiboMapStyle';
+const MAP_VIEW_STORAGE_KEY = 'ceiboMapView';
+const TRANSPARENT_TILE_DATA_URI = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
+const OWM_TILE_APPID_STORAGE_KEY = 'ceiboOwmTileAppId';
 const STRONG_WAVE_THRESHOLD_M = 1.8;
 const LAND_DATA_SOURCES = [
     {
@@ -99,8 +126,23 @@ let autoWpMinSpacingNm = null;
 let landGeometry = null;
 
 function normalizeHourTime(timeValue) {
-    const hour = String(parseInt(String(timeValue || '12:00').split(':')[0], 10) || 12).padStart(2, '0');
-    return `${hour}:00`;
+    const [rawHour, rawMinute] = String(timeValue || '12:00').split(':');
+    let hour = parseInt(rawHour, 10);
+    let minute = parseInt(rawMinute, 10);
+
+    if (!Number.isFinite(hour)) hour = 12;
+    if (!Number.isFinite(minute)) minute = 0;
+
+    hour = Math.max(0, Math.min(23, hour));
+    minute = Math.max(0, Math.min(59, minute));
+
+    minute = Math.round(minute / 10) * 10;
+    if (minute === 60) {
+        hour = (hour + 1) % 24;
+        minute = 0;
+    }
+
+    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }
 
 function updateDepartureDateTimeInput() {
@@ -132,11 +174,99 @@ function escapeHtml(value) {
 
 function toLocalDateTimeInputValue(dateObj) {
     if (!(dateObj instanceof Date) || Number.isNaN(dateObj.getTime())) return '';
-    const year = dateObj.getFullYear();
-    const month = String(dateObj.getMonth() + 1).padStart(2, '0');
-    const day = String(dateObj.getDate()).padStart(2, '0');
-    const hour = String(dateObj.getHours()).padStart(2, '0');
-    return `${year}-${month}-${day}T${hour}:00`;
+    const rounded = new Date(dateObj.getTime());
+    rounded.setMinutes(Math.round(rounded.getMinutes() / 10) * 10, 0, 0);
+    const year = rounded.getFullYear();
+    const month = String(rounded.getMonth() + 1).padStart(2, '0');
+    const day = String(rounded.getDate()).padStart(2, '0');
+    const hour = String(rounded.getHours()).padStart(2, '0');
+    const minute = String(rounded.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day}T${hour}:${minute}`;
+}
+
+function loadSavedMapView() {
+    try {
+        const raw = localStorage.getItem(MAP_VIEW_STORAGE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        const lat = Number(parsed?.lat);
+        const lng = Number(parsed?.lng);
+        const zoom = Number(parsed?.zoom);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(zoom)) return null;
+        if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+        return { lat, lng, zoom: Math.max(2, Math.min(19, Math.round(zoom))) };
+    } catch (_error) {
+        return null;
+    }
+}
+
+function persistMapView() {
+    if (!map) return;
+    const center = map.getCenter();
+    localStorage.setItem(MAP_VIEW_STORAGE_KEY, JSON.stringify({
+        lat: Number(center.lat.toFixed(6)),
+        lng: Number(center.lng.toFixed(6)),
+        zoom: map.getZoom()
+    }));
+}
+
+function getStoredOpenWeatherTileAppId() {
+    return String(localStorage.getItem(OWM_TILE_APPID_STORAGE_KEY) || '').trim();
+}
+
+function createIsobarOverlayLayer(appId) {
+    if (!appId) {
+        return L.layerGroup();
+    }
+
+    return L.tileLayer(`https://tile.openweathermap.org/map/pressure_new/{z}/{x}/{y}.png?appid=${encodeURIComponent(appId)}`, {
+        attribution: 'Isobares © OpenWeatherMap',
+        opacity: 0.65,
+        maxNativeZoom: 18,
+        errorTileUrl: TRANSPARENT_TILE_DATA_URI,
+        crossOrigin: true
+    });
+}
+
+async function testOpenWeatherApiKey(appId) {
+    const cleanedKey = String(appId || '').trim();
+    if (!cleanedKey) {
+        return { ok: false, message: 'Clé vide.' };
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 9000);
+
+    try {
+        const url = `https://api.openweathermap.org/data/2.5/weather?lat=41.3851&lon=2.1734&appid=${encodeURIComponent(cleanedKey)}`;
+        const response = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeout);
+
+        let payload = null;
+        try {
+            payload = await response.json();
+        } catch (_error) {
+            payload = null;
+        }
+
+        if (response.ok) {
+            return { ok: true, message: 'Clé valide (API OpenWeatherMap accessible).' };
+        }
+
+        const apiMessage = String(payload?.message || '').trim();
+        return {
+            ok: false,
+            message: apiMessage
+                ? `Clé invalide (${response.status}): ${apiMessage}`
+                : `Clé invalide (${response.status}).`
+        };
+    } catch (error) {
+        clearTimeout(timeout);
+        if (error?.name === 'AbortError') {
+            return { ok: false, message: 'Timeout: test API trop long.' };
+        }
+        return { ok: false, message: 'Erreur réseau pendant le test API.' };
+    }
 }
 
 function applyLastDepartureSuggestion() {
@@ -1672,8 +1802,22 @@ function getWeatherFavorabilityPenalty(weather) {
     return penalty;
 }
 
-async function estimateRouteForDeparture(departureDateTime) {
-    if (!Array.isArray(routePoints) || routePoints.length < 2) return null;
+function normalizeRouteScenarioPoints(source) {
+    if (!Array.isArray(source)) return [];
+
+    return source
+        .map(point => {
+            const lat = Number(point?.lat);
+            const lng = Number(point?.lng ?? point?.lon);
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+            return { lat, lng };
+        })
+        .filter(Boolean);
+}
+
+async function estimateRouteForDepartureOnPoints(routeScenarioPoints, departureDateTime) {
+    const points = normalizeRouteScenarioPoints(routeScenarioPoints);
+    if (points.length < 2) return null;
 
     let totalTimeHours = 0;
     let maxWind = 0;
@@ -1682,9 +1826,9 @@ async function estimateRouteForDeparture(departureDateTime) {
     let hasMotorSegment = false;
     let motorTimeHours = 0;
 
-    for (let i = 0; i < routePoints.length - 1; i++) {
-        const start = { lat: routePoints[i].lat, lon: routePoints[i].lng };
-        const end = { lat: routePoints[i + 1].lat, lon: routePoints[i + 1].lng };
+    for (let i = 0; i < points.length - 1; i++) {
+        const start = { lat: points[i].lat, lon: points[i].lng };
+        const end = { lat: points[i + 1].lat, lon: points[i + 1].lng };
         const legStartDateTime = new Date(departureDateTime.getTime() + totalTimeHours * 3600 * 1000);
         const legStartSlot = toDateAndHourUtc(legStartDateTime);
         const legStartWeather = await getWeatherAtDateHour(start.lat, start.lon, legStartSlot.date, legStartSlot.hour);
@@ -1746,15 +1890,15 @@ async function estimateRouteForDeparture(departureDateTime) {
     const arrivalSlot = toDateAndHourUtc(arrivalDateTime);
 
     const departureWeather = await getWeatherAtDateHour(
-        routePoints[0].lat,
-        routePoints[0].lng,
+        points[0].lat,
+        points[0].lng,
         departureSlot.date,
         departureSlot.hour
     );
 
     const arrivalWeather = await getWeatherAtDateHour(
-        routePoints[routePoints.length - 1].lat,
-        routePoints[routePoints.length - 1].lng,
+        points[points.length - 1].lat,
+        points[points.length - 1].lng,
         arrivalSlot.date,
         arrivalSlot.hour
     );
@@ -1781,8 +1925,13 @@ async function estimateRouteForDeparture(departureDateTime) {
         arrivalWeather,
         score,
         isSafe: maxWind <= RECOMMENDED_MAX_WIND_KN,
-        isNoMotor: windFloorOk && !hasMotorSegment
+        isNoMotor: windFloorOk && !hasMotorSegment,
+        routePointCount: points.length
     };
+}
+
+async function estimateRouteForDeparture(departureDateTime) {
+    return estimateRouteForDepartureOnPoints(routePoints, departureDateTime);
 }
 
 function renderDepartureSuggestion(result) {
@@ -1829,6 +1978,8 @@ async function suggestBestDeparture() {
         button.textContent = 'Analyse météo...';
     }
 
+    beginAiTrafficSession('Conseil départ météo');
+
     try {
         const baseDateTime = new Date(`${departureDate}T${departureTime}:00`);
         if (Number.isNaN(baseDateTime.getTime())) throw new Error('invalid-departure');
@@ -1840,12 +1991,14 @@ async function suggestBestDeparture() {
         for (let i = 0; i < maxCandidates; i++) {
             const candidateDate = new Date(baseDateTime.getTime() + i * stepHours * 3600 * 1000);
             if ((candidateDate.getTime() - baseDateTime.getTime()) > forecastWindowDays * 24 * 3600 * 1000) break;
+            pushAiTrafficLog(`Évaluation départ candidat ${i + 1}/${maxCandidates} · ${formatWeekdayHourUtc(candidateDate)}`);
             const estimate = await estimateRouteForDeparture(candidateDate);
             if (estimate) candidates.push(estimate);
         }
 
         if (candidates.length === 0) {
             renderDepartureSuggestion(null);
+            endAiTrafficSession('Aucune fenêtre météo viable trouvée');
             return;
         }
 
@@ -1861,17 +2014,258 @@ async function suggestBestDeparture() {
                 container.classList.remove('suggestion-clickable');
                 container.textContent = 'Suggestion départ: aucune fenêtre météo ≤ 20 kn trouvée.';
             }
+            endAiTrafficSession('Aucune fenêtre ≤ 20 kn');
             return;
         }
 
         renderDepartureSuggestion(best);
         applyLastDepartureSuggestion();
+        endAiTrafficSession('Suggestion départ terminée');
     } catch (_error) {
+        endAiTrafficSession('Erreur pendant le calcul de suggestion');
         alert('Impossible de calculer une suggestion de départ pour le moment.');
     } finally {
         if (button) {
             button.disabled = false;
             button.textContent = 'Conseiller départ météo (≤ 20 kn)';
+        }
+    }
+}
+
+function updateRoutingControlsUiFromState() {
+    const sailModeSelect = document.getElementById('sailModeSelect');
+    if (sailModeSelect) sailModeSelect.value = sailMode;
+
+    const tackingInput = document.getElementById('tackingTimeInput');
+    if (tackingInput) tackingInput.value = String(tackingTimeHours);
+}
+
+function renderAiRouteCandidates(candidates) {
+    const info = document.getElementById('aiRouteSuggestionInfo');
+    const container = document.getElementById('aiRouteSuggestions');
+    if (!info || !container) return;
+
+    if (!Array.isArray(candidates) || candidates.length === 0) {
+        lastAiRouteCandidates = [];
+        info.textContent = 'Routes IA: aucune proposition disponible.';
+        container.innerHTML = '';
+        return;
+    }
+
+    lastAiRouteCandidates = candidates;
+    info.textContent = `Routes IA: ${candidates.length} proposition(s). Clique "Appliquer" pour charger un profil.`;
+
+    container.innerHTML = candidates.map((item, index) => {
+        const depWind = Number.isFinite(item?.departureWeather?.windSpeed) ? `${item.departureWeather.windSpeed.toFixed(1)} kn` : 'N/A';
+        const maxWind = Number.isFinite(item?.maxWind) ? `${item.maxWind.toFixed(1)} kn` : 'N/A';
+        const motor = Number.isFinite(item?.motorTimeHours) ? formatDurationHours(item.motorTimeHours) : 'N/A';
+        const score = Number.isFinite(item?.score) ? item.score.toFixed(1) : 'N/A';
+        const routeVariant = item?.routeVariantLabel || 'Trajectoire standard';
+        return `<div class="ai-route-card"><strong>${escapeHtml(item.label)}</strong><br>` +
+            `Trajectoire: ${escapeHtml(routeVariant)} · Points: ${Number(item?.routePointCount || 0)}<br>` +
+            `Départ: ${formatWeekdayHourUtc(item.departureDateTime)} · Durée: ${formatDurationHours(item.totalTimeHours)}<br>` +
+            `Vent départ: ${depWind} · Vent max trajet: ${maxWind} · Moteur: ${motor}<br>` +
+            `Mode: ${escapeHtml(item.sailMode)} · Bord: ${Math.round(item.tackingTimeHours * 60)} min · Score: ${score}<br>` +
+            `<button type="button" class="apply-ai-route-btn" data-ai-route-index="${index}" style="margin-top:6px;">Appliquer ce profil</button></div>`;
+    }).join('');
+}
+
+function replaceRouteWithScenarioPoints(points) {
+    const normalized = normalizeRouteScenarioPoints(points);
+    if (normalized.length < 2 || !map) return;
+
+    markers.forEach(marker => {
+        if (map.hasLayer(marker)) map.removeLayer(marker);
+    });
+    markers = [];
+    routePoints = [];
+    selectedUserWaypointIndex = -1;
+    currentLoadedRouteIndex = -1;
+
+    if (routeLayer && map.hasLayer(routeLayer)) {
+        map.removeLayer(routeLayer);
+    }
+    routeLayer = null;
+
+    if (windLayer && map.hasLayer(windLayer)) {
+        map.removeLayer(windLayer);
+    }
+    windLayer = null;
+
+    clearWaypointWindDirectionLayers();
+    clearWaveDirectionSegmentLayers();
+    clearGeneratedWaypointMarkers();
+    clearArrivalPoiMarkers();
+    waypointPassageSlots.clear();
+    lastRouteBounds = null;
+    lastComputedReportData = null;
+
+    normalized.forEach(point => {
+        const marker = createWaypointMarker([point.lat, point.lng]);
+        markers.push(marker);
+        routePoints.push(marker.getLatLng());
+    });
+
+    drawRoute(routePoints);
+    updateSelectedWaypointInfo();
+}
+
+function applyAiRouteCandidate(index) {
+    const candidate = lastAiRouteCandidates[index];
+    if (!candidate) return;
+
+    if (Array.isArray(candidate.routeScenarioPoints) && candidate.routeScenarioPoints.length >= 2) {
+        replaceRouteWithScenarioPoints(candidate.routeScenarioPoints);
+    }
+
+    sailMode = candidate.sailMode;
+    tackingTimeHours = candidate.tackingTimeHours;
+    updateRoutingControlsUiFromState();
+
+    if (candidate?.departureDateTime instanceof Date && !Number.isNaN(candidate.departureDateTime.getTime())) {
+        const inputValue = toLocalDateTimeInputValue(candidate.departureDateTime);
+        setDepartureFromDateTimeInput(inputValue);
+    }
+
+    const info = document.getElementById('aiRouteSuggestionInfo');
+    if (info) {
+        const routeVariant = candidate.routeVariantLabel || 'Trajectoire standard';
+        info.textContent = `Profil appliqué: ${candidate.label} · ${routeVariant}. Tu peux maintenant cliquer Calculer.`;
+    }
+}
+
+function scoreAiCandidate(estimate, profile) {
+    const windPenalty = Number.isFinite(estimate?.maxWind) ? Math.max(0, estimate.maxWind - RECOMMENDED_MAX_WIND_KN) * 12 : 20;
+    const motorPenalty = Number.isFinite(estimate?.motorTimeHours) ? estimate.motorTimeHours * (profile.priority === 'safe' ? 10 : 5) : 0;
+    const timePenalty = Number.isFinite(estimate?.totalTimeHours) ? estimate.totalTimeHours * (profile.priority === 'performance' ? 0.1 : 0.3) : 10;
+    return (estimate.score || 0) + windPenalty + motorPenalty + timePenalty;
+}
+
+function buildAiRouteVariants() {
+    const currentPath = normalizeRouteScenarioPoints(routePoints);
+    if (currentPath.length < 2) return [];
+
+    const variants = [
+        {
+            routeVariantLabel: 'Route actuelle',
+            points: currentPath
+        }
+    ];
+
+    const start = currentPath[0];
+    const end = currentPath[currentPath.length - 1];
+    const bearing = getBearing({ lat: start.lat, lon: start.lng }, { lat: end.lat, lon: end.lng });
+    const totalNm = distanceNm(start.lat, start.lng, end.lat, end.lng);
+    const detourNm = Math.max(12, Math.min(40, totalNm * 0.18));
+    const mid = movePoint(start.lat, start.lng, bearing, totalNm / 2);
+
+    const northDetour = movePoint(mid.lat, mid.lon, bearing + 90, detourNm);
+    const southDetour = movePoint(mid.lat, mid.lon, bearing - 90, detourNm);
+
+    variants.push({
+        routeVariantLabel: 'Contournement nord',
+        points: [start, { lat: northDetour.lat, lng: northDetour.lon }, end]
+    });
+    variants.push({
+        routeVariantLabel: 'Contournement sud',
+        points: [start, { lat: southDetour.lat, lng: southDetour.lon }, end]
+    });
+
+    if (currentPath.length > 2) {
+        variants.push({
+            routeVariantLabel: 'Directe départ-arrivée',
+            points: [start, end]
+        });
+    }
+
+    return variants;
+}
+
+async function suggestAiRouteOptions() {
+    if (routePoints.length < 2) {
+        alert('Ajoute au moins 2 waypoints pour analyser des routes IA.');
+        return;
+    }
+
+    const button = document.getElementById('suggestAiRoutesBtn');
+    const info = document.getElementById('aiRouteSuggestionInfo');
+
+    if (button) {
+        button.disabled = true;
+        button.textContent = 'Calcul IA...';
+    }
+    if (info) info.textContent = 'Routes IA: calcul en cours...';
+    beginAiTrafficSession('Routage IA multi-scénarios');
+
+    const originalSailMode = sailMode;
+    const originalTackingTimeHours = tackingTimeHours;
+
+    try {
+        const baseDateTime = new Date(`${departureDate}T${departureTime}:00`);
+        if (Number.isNaN(baseDateTime.getTime())) throw new Error('invalid-departure');
+
+        const routeVariants = buildAiRouteVariants();
+        if (!routeVariants.length) throw new Error('no-route-variant');
+        pushAiTrafficLog(`Variantes trajectoires détectées: ${routeVariants.length}`);
+
+        const profiles = [
+            { label: 'Safe', sailMode: 'prudent', tackingTimeHours: 0.5, priority: 'safe' },
+            { label: 'Équilibré', sailMode: 'auto', tackingTimeHours: 0.5, priority: 'balanced' },
+            { label: 'Performance', sailMode: 'performance', tackingTimeHours: 0.33, priority: 'performance' }
+        ];
+
+        const results = [];
+        const stepHours = 6;
+        const horizonHours = Math.min(48, Math.max(24, forecastWindowDays * 24));
+
+        for (const profile of profiles) {
+            sailMode = profile.sailMode;
+            tackingTimeHours = profile.tackingTimeHours;
+            pushAiTrafficLog(`Profil ${profile.label}: mode ${profile.sailMode}, bord ${Math.round(profile.tackingTimeHours * 60)} min`);
+
+            for (const variant of routeVariants) {
+                pushAiTrafficLog(`↳ Analyse variante: ${variant.routeVariantLabel}`);
+                let best = null;
+                for (let offset = 0; offset <= horizonHours; offset += stepHours) {
+                    const candidateDate = new Date(baseDateTime.getTime() + offset * 3600 * 1000);
+                    pushAiTrafficLog(`   - Run météo ${formatWeekdayHourUtc(candidateDate)}`);
+                    const estimate = await estimateRouteForDepartureOnPoints(variant.points, candidateDate);
+                    if (!estimate) continue;
+                    const aiScore = scoreAiCandidate(estimate, profile);
+                    const enriched = {
+                        ...estimate,
+                        aiScore,
+                        label: profile.label,
+                        sailMode: profile.sailMode,
+                        tackingTimeHours: profile.tackingTimeHours,
+                        routeVariantLabel: variant.routeVariantLabel,
+                        routeScenarioPoints: variant.points
+                    };
+
+                    if (!best || enriched.aiScore < best.aiScore) {
+                        best = enriched;
+                    }
+                }
+
+                if (best) results.push(best);
+            }
+        }
+
+        results.sort((a, b) => a.aiScore - b.aiScore);
+        renderAiRouteCandidates(results.slice(0, 6));
+        pushAiTrafficLog(`Classement final: ${Math.min(results.length, 6)} résultat(s) affiché(s)`);
+        endAiTrafficSession('Routage IA terminé');
+    } catch (_error) {
+        renderAiRouteCandidates([]);
+        if (info) info.textContent = 'Routes IA: impossible de calculer des options pour le moment.';
+        endAiTrafficSession('Erreur pendant le routage IA');
+    } finally {
+        sailMode = originalSailMode;
+        tackingTimeHours = originalTackingTimeHours;
+        updateRoutingControlsUiFromState();
+        if (button) {
+            button.disabled = false;
+            button.textContent = 'Proposer routes IA (safe / perf)';
         }
     }
 }
@@ -2638,7 +3032,8 @@ function setMeasureMode(enabled) {
     }
 
     if (map) {
-        map.getContainer().style.cursor = measureModeEnabled ? 'crosshair' : '';
+        const shouldUseCrosshair = measureModeEnabled || (weatherPointerPlacementMode && activeTabName === 'weather');
+        map.getContainer().style.cursor = shouldUseCrosshair ? 'crosshair' : '';
     }
 }
 
@@ -2700,12 +3095,782 @@ function createNauticalScaleControl() {
     updateNauticalScale();
 }
 
+function formatDateTimeFr(dateInput) {
+    const dateObj = new Date(dateInput);
+    if (Number.isNaN(dateObj.getTime())) return 'N/A';
+    return dateObj.toLocaleString('fr-FR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+}
+
+function loadArrayFromStorage(storageKey) {
+    try {
+        const raw = localStorage.getItem(storageKey);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (_error) {
+        return [];
+    }
+}
+
+function saveArrayToStorage(storageKey, data) {
+    const safeArray = Array.isArray(data) ? data : [];
+    localStorage.setItem(storageKey, JSON.stringify(safeArray));
+}
+
+function setCloudAuthStatus(message, isError = false) {
+    const status = document.getElementById('cloudAuthStatus');
+    if (!status) return;
+    status.textContent = message;
+    status.style.color = isError ? '#ff8f8f' : '';
+}
+
+function unsubscribeCloudAuthSubscription() {
+    const subscription =
+        cloudAuthSubscription?.data?.subscription ||
+        cloudAuthSubscription?.subscription ||
+        cloudAuthSubscription;
+
+    if (subscription?.unsubscribe) {
+        subscription.unsubscribe();
+    }
+
+    cloudAuthSubscription = null;
+}
+
+function updateCloudAuthUi() {
+    const emailSignInBtn = document.getElementById('cloudEmailSignInBtn');
+    const emailSignUpBtn = document.getElementById('cloudEmailSignUpBtn');
+    const signOutBtn = document.getElementById('cloudSignOutBtn');
+
+    if (cloudAuthUser) {
+        const label = cloudAuthUser.email || cloudAuthUser.user_metadata?.full_name || cloudAuthUser.id;
+        setCloudAuthStatus(`Utilisateur: connecté (${label})`);
+    } else {
+        setCloudAuthStatus('Utilisateur: non connecté');
+    }
+
+    if (emailSignInBtn) emailSignInBtn.disabled = !cloudClient || !!cloudAuthUser;
+    if (emailSignUpBtn) emailSignUpBtn.disabled = !cloudClient || !!cloudAuthUser;
+    if (signOutBtn) signOutBtn.disabled = !cloudClient || !cloudAuthUser;
+}
+
+function readCloudUserCredentials() {
+    const email = String(document.getElementById('cloudEmailInput')?.value || '').trim().toLowerCase();
+    const password = String(document.getElementById('cloudUserPasswordInput')?.value || '').trim();
+    return { email, password };
+}
+
+function normalizeEmailForCompare(value) {
+    return String(value || '').trim().toLowerCase();
+}
+
+async function checkCloudEmailAllowed(email) {
+    if (!cloudClient) return { allowed: false, reason: 'cloud-not-ready' };
+    const normalizedEmail = normalizeEmailForCompare(email);
+    if (!normalizedEmail) return { allowed: false, reason: 'missing-email' };
+
+    try {
+        const { data: exactData, error: exactError } = await cloudClient
+            .from(CLOUD_ALLOWED_USERS_TABLE)
+            .select('email')
+            .eq('email', normalizedEmail)
+            .limit(1);
+
+        if (exactError) {
+            const message = String(exactError.message || '');
+            const code = String(exactError.code || '');
+            if (code === '42P01' || message.toLowerCase().includes('does not exist')) {
+                return { allowed: true, reason: 'table-missing' };
+            }
+            return { allowed: false, reason: `query-error:${message}` };
+        }
+
+        if (Array.isArray(exactData) && exactData.length > 0) {
+            return { allowed: true, reason: 'listed' };
+        }
+
+        const { data: allData, error: allError } = await cloudClient
+            .from(CLOUD_ALLOWED_USERS_TABLE)
+            .select('email')
+            .limit(1000);
+
+        if (allError) {
+            const message = String(allError.message || '');
+            return { allowed: false, reason: `query-error:${message}` };
+        }
+
+        const normalizedAllowedEmails = (Array.isArray(allData) ? allData : [])
+            .map(row => normalizeEmailForCompare(row?.email))
+            .filter(Boolean);
+
+        if (normalizedAllowedEmails.includes(normalizedEmail)) {
+            return { allowed: true, reason: 'listed-normalized' };
+        }
+
+        return { allowed: false, reason: 'not-listed' };
+    } catch (error) {
+        return { allowed: false, reason: `exception:${String(error?.message || error)}` };
+    }
+}
+
+async function enforceCloudWhitelistForCurrentUser() {
+    if (!cloudClient || !cloudAuthUser?.email || cloudWhitelistCheckInFlight) return;
+    cloudWhitelistCheckInFlight = true;
+
+    try {
+        const email = String(cloudAuthUser.email || '').trim().toLowerCase();
+        const verdict = await checkCloudEmailAllowed(email);
+        if (!verdict.allowed) {
+            await cloudClient.auth.signOut();
+            cloudAuthUser = null;
+            updateCloudAuthUi();
+            if (verdict.reason === 'not-listed') {
+                setCloudAuthStatus(`Utilisateur refusé: ${email} absent de ${CLOUD_ALLOWED_USERS_TABLE}`, true);
+            } else {
+                setCloudAuthStatus(`Contrôle accès impossible: ${verdict.reason}`, true);
+            }
+        }
+    } catch (_error) {
+    } finally {
+        cloudWhitelistCheckInFlight = false;
+    }
+}
+
+async function refreshCloudAuthSession() {
+    if (!cloudClient) {
+        cloudAuthUser = null;
+        updateCloudAuthUi();
+        return;
+    }
+
+    try {
+        const { data, error } = await cloudClient.auth.getSession();
+        if (error) throw error;
+        cloudAuthUser = data?.session?.user || null;
+        updateCloudAuthUi();
+        await enforceCloudWhitelistForCurrentUser();
+    } catch (_error) {
+        cloudAuthUser = null;
+        updateCloudAuthUi();
+    }
+}
+
+function setNavLogStatus(message, isError = false) {
+    const status = document.getElementById('navLogStatus');
+    if (!status) return;
+    status.textContent = message;
+    status.style.color = isError ? '#ff8f8f' : '';
+}
+
+function scheduleCloudLogbookPush() {
+    if (!isCloudReady()) return;
+
+    if (cloudLogbookPushTimer) {
+        clearTimeout(cloudLogbookPushTimer);
+    }
+
+    cloudLogbookPushTimer = setTimeout(async () => {
+        cloudLogbookPushTimer = null;
+        if (!isCloudReady()) return;
+        try {
+            await pushRoutesToCloud();
+            setCloudStatus(`Cloud synchro auto · ${getSavedRoutes().length} route(s) · logs OK`);
+        } catch (error) {
+            setCloudStatus(`Synchro logs impossible: ${formatCloudError(error)}`, true);
+        }
+    }, CLOUD_LOGBOOK_PUSH_DEBOUNCE_MS);
+}
+
+function saveNavLogEntries() {
+    saveArrayToStorage(NAV_LOG_STORAGE_KEY, navLogEntries);
+    scheduleCloudLogbookPush();
+}
+
+function formatNowTimeLabel() {
+    const now = new Date();
+    return now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function renderAiTrafficEntries() {
+    const list = document.getElementById('aiTrafficList');
+    if (!list) return;
+
+    list.innerHTML = aiTrafficEntries
+        .slice(-180)
+        .map(item => `<div class="ai-traffic-item"><strong>${escapeHtml(item.time)}</strong> · ${escapeHtml(item.message)}</div>`)
+        .join('');
+
+    list.scrollTop = list.scrollHeight;
+}
+
+function showAiTrafficOverlay() {
+    const overlay = document.getElementById('aiTrafficOverlay');
+    if (!overlay) return;
+    overlay.style.display = 'block';
+}
+
+function hideAiTrafficOverlay() {
+    const overlay = document.getElementById('aiTrafficOverlay');
+    if (!overlay) return;
+    overlay.style.display = 'none';
+}
+
+function clearAiTrafficOverlay() {
+    aiTrafficEntries = [];
+    renderAiTrafficEntries();
+}
+
+function pushAiTrafficLog(message) {
+    aiTrafficEntries.push({
+        time: formatNowTimeLabel(),
+        message: String(message || '')
+    });
+
+    if (aiTrafficEntries.length > 260) {
+        aiTrafficEntries = aiTrafficEntries.slice(aiTrafficEntries.length - 260);
+    }
+
+    renderAiTrafficEntries();
+}
+
+function beginAiTrafficSession(title) {
+    if (aiTrafficAutoHideTimer) {
+        clearTimeout(aiTrafficAutoHideTimer);
+        aiTrafficAutoHideTimer = null;
+    }
+
+    clearAiTrafficOverlay();
+    showAiTrafficOverlay();
+    pushAiTrafficLog(`Session démarrée: ${title}`);
+}
+
+function endAiTrafficSession(message) {
+    pushAiTrafficLog(message || 'Session terminée');
+
+    if (aiTrafficAutoHideTimer) {
+        clearTimeout(aiTrafficAutoHideTimer);
+    }
+
+    aiTrafficAutoHideTimer = setTimeout(() => {
+        hideAiTrafficOverlay();
+    }, 9000);
+}
+
+function getManualNavFormData() {
+    const watchTimeInput = document.getElementById('watchTimeInput');
+    const watchCrewInput = document.getElementById('watchCrewInput');
+    const watchHeadingInput = document.getElementById('watchHeadingInput');
+    const watchWindDirInput = document.getElementById('watchWindDirInput');
+    const watchWindSpeedInput = document.getElementById('watchWindSpeedInput');
+    const watchSeaStateInput = document.getElementById('watchSeaStateInput');
+    const watchSailConfigInput = document.getElementById('watchSailConfigInput');
+    const watchBarometerInput = document.getElementById('watchBarometerInput');
+    const watchLogNmInput = document.getElementById('watchLogNmInput');
+    const watchEventsInput = document.getElementById('watchEventsInput');
+
+    const isoDate = watchTimeInput?.value ? `${watchTimeInput.value}:00` : new Date().toISOString();
+
+    return {
+        watchTimeIso: isoDate,
+        watchCrew: String(watchCrewInput?.value || '').trim(),
+        headingDeg: Number.parseFloat(String(watchHeadingInput?.value || '')),
+        windDirectionDeg: Number.parseFloat(String(watchWindDirInput?.value || '')),
+        windSpeedKn: Number.parseFloat(String(watchWindSpeedInput?.value || '')),
+        seaState: String(watchSeaStateInput?.value || '').trim(),
+        sailConfig: String(watchSailConfigInput?.value || '').trim(),
+        barometerHpa: Number.parseFloat(String(watchBarometerInput?.value || '')),
+        logDistanceNm: Number.parseFloat(String(watchLogNmInput?.value || '')),
+        events: String(watchEventsInput?.value || '').trim()
+    };
+}
+
+function drawHeelSpeedChart() {
+    const canvas = document.getElementById('heelSpeedChart');
+    if (!canvas) return;
+    const context = canvas.getContext('2d');
+    if (!context) return;
+
+    const width = canvas.width;
+    const height = canvas.height;
+
+    context.clearRect(0, 0, width, height);
+    context.fillStyle = '#0f1d2b';
+    context.fillRect(0, 0, width, height);
+
+    context.strokeStyle = 'rgba(255,255,255,0.15)';
+    context.lineWidth = 1;
+    context.beginPath();
+    context.moveTo(36, 10);
+    context.lineTo(36, height - 28);
+    context.lineTo(width - 12, height - 28);
+    context.stroke();
+
+    const points = navLogEntries
+        .filter(item => Number.isFinite(item?.heelDeg) && Number.isFinite(item?.speedKn))
+        .slice(-140);
+
+    if (!points.length) {
+        context.fillStyle = '#9cb5c9';
+        context.font = '12px Arial';
+        context.fillText('Aucune donnée inclinaison/vitesse', 50, 26);
+        return;
+    }
+
+    const maxHeel = Math.max(20, ...points.map(item => Math.abs(item.heelDeg)));
+    const maxSpeed = Math.max(8, ...points.map(item => item.speedKn));
+
+    points.forEach(item => {
+        const x = 36 + (Math.abs(item.heelDeg) / maxHeel) * (width - 52);
+        const y = (height - 28) - (item.speedKn / maxSpeed) * (height - 42);
+        context.fillStyle = '#8fe7ff';
+        context.beginPath();
+        context.arc(x, y, 2.4, 0, Math.PI * 2);
+        context.fill();
+    });
+
+    context.fillStyle = '#9cb5c9';
+    context.font = '11px Arial';
+    context.fillText(`Inclinaison max: ${maxHeel.toFixed(1)}°`, 40, height - 10);
+    context.fillText(`Vitesse max: ${maxSpeed.toFixed(1)} kn`, width - 160, 20);
+}
+
+function renderNavLogList() {
+    const container = document.getElementById('navLogList');
+    if (!container) return;
+
+    if (!Array.isArray(navLogEntries) || navLogEntries.length === 0) {
+        container.innerHTML = '<div class="log-card">Aucune entrée navigation pour le moment.</div>';
+        drawHeelSpeedChart();
+        return;
+    }
+
+    const rows = navLogEntries
+        .slice(-30)
+        .reverse()
+        .map(item => {
+            const speed = Number.isFinite(item?.speedKn) ? `${item.speedKn.toFixed(1)} kn` : 'N/A';
+            const heel = Number.isFinite(item?.heelDeg) ? `${item.heelDeg.toFixed(1)}°` : 'N/A';
+            const heading = Number.isFinite(item?.headingDeg) ? `${Math.round(item.headingDeg)}°` : 'N/A';
+            const windDir = Number.isFinite(item?.windDirectionDeg) ? `${Math.round(item.windDirectionDeg)}°` : 'N/A';
+            const windSpeed = Number.isFinite(item?.windSpeedKn) ? `${item.windSpeedKn.toFixed(1)} kn` : 'N/A';
+            const seaState = item?.seaState ? String(item.seaState) : 'N/A';
+            const sailConfig = item?.sailConfig ? escapeHtml(item.sailConfig) : 'N/A';
+            const baro = Number.isFinite(item?.barometerHpa) ? `${item.barometerHpa.toFixed(1)} hPa` : 'N/A';
+            const loch = Number.isFinite(item?.logDistanceNm) ? `${item.logDistanceNm.toFixed(1)} NM` : 'N/A';
+            const crew = item?.watchCrew ? escapeHtml(item.watchCrew) : 'N/A';
+            const events = item?.events ? `<br><em>${escapeHtml(item.events)}</em>` : '';
+            const positionLine = Number.isFinite(item?.lat) && Number.isFinite(item?.lng)
+                ? `Lat: ${Number(item.lat).toFixed(5)} · Lng: ${Number(item.lng).toFixed(5)}`
+                : 'Lat/Lng: N/A';
+            const watchTime = item?.watchTimeIso ? formatDateTimeFr(item.watchTimeIso) : formatDateTimeFr(item?.timestamp);
+
+            return `<div class="log-card"><strong>${watchTime}</strong><br>` +
+                `Quart: ${crew} · Source: ${escapeHtml(item?.source || 'manual')}<br>` +
+                `${positionLine}<br>` +
+                `Cap: ${heading} · Vent: ${windDir} / ${windSpeed} · Mer: ${escapeHtml(seaState)}<br>` +
+                `Voilure: ${sailConfig} · Baro: ${baro} · Loch: ${loch}<br>` +
+                `Vitesse: ${speed} · Inclinaison: ${heel}${events}</div>`;
+        })
+        .join('');
+
+    container.innerHTML = rows;
+    drawHeelSpeedChart();
+}
+
+function appendNavLogEntry({ lat, lng, speedKn, heelDeg, source = 'gps', watchTimeIso = null, watchCrew = '', headingDeg = null, windDirectionDeg = null, windSpeedKn = null, seaState = '', sailConfig = '', barometerHpa = null, logDistanceNm = null, events = '' }) {
+    const hasPosition = Number.isFinite(lat) && Number.isFinite(lng);
+
+    if (!hasPosition && source !== 'manual') return;
+
+    navLogEntries.push({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        timestamp: new Date().toISOString(),
+        watchTimeIso,
+        lat: hasPosition ? lat : null,
+        lng: hasPosition ? lng : null,
+        speedKn: Number.isFinite(speedKn) ? speedKn : null,
+        heelDeg: Number.isFinite(heelDeg) ? heelDeg : null,
+        source,
+        watchCrew,
+        headingDeg: Number.isFinite(headingDeg) ? headingDeg : null,
+        windDirectionDeg: Number.isFinite(windDirectionDeg) ? windDirectionDeg : null,
+        windSpeedKn: Number.isFinite(windSpeedKn) ? windSpeedKn : null,
+        seaState,
+        sailConfig,
+        barometerHpa: Number.isFinite(barometerHpa) ? barometerHpa : null,
+        logDistanceNm: Number.isFinite(logDistanceNm) ? logDistanceNm : null,
+        events
+    });
+
+    if (navLogEntries.length > 1200) {
+        navLogEntries = navLogEntries.slice(navLogEntries.length - 1200);
+    }
+
+    saveNavLogEntries();
+    renderNavLogList();
+}
+
+function addManualNavigationLogEntry() {
+    const manualData = getManualNavFormData();
+
+    appendNavLogEntry({
+        lat: null,
+        lng: null,
+        speedKn: navLatestSpeedKn,
+        heelDeg: navLatestHeelDeg,
+        source: 'manual',
+        ...manualData
+    });
+
+    setNavLogStatus(`Entrée jour de bord ajoutée · ${navLogEntries.length} entrée(s)`);
+}
+
+function handleNavOrientation(event) {
+    const gamma = Number(event?.gamma);
+    if (!Number.isFinite(gamma)) return;
+    navLatestHeelDeg = gamma;
+}
+
+function ensureMotionListenerBound() {
+    if (navMotionListenerBound) return;
+    window.addEventListener('deviceorientation', handleNavOrientation, true);
+    navMotionListenerBound = true;
+}
+
+async function requestMotionPermissionIfNeeded() {
+    try {
+        if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+            const permission = await DeviceOrientationEvent.requestPermission();
+            if (permission !== 'granted') {
+                setNavLogStatus('Inclinaison refusée par iOS.', true);
+                return false;
+            }
+        }
+
+        ensureMotionListenerBound();
+        setNavLogStatus('Capteur inclinaison activé.');
+        return true;
+    } catch (_error) {
+        setNavLogStatus('Impossible d’activer le capteur inclinaison.', true);
+        return false;
+    }
+}
+
+function startNavigationLogging() {
+    if (!navigator.geolocation) {
+        setNavLogStatus('GPS non disponible sur cet appareil.', true);
+        return;
+    }
+
+    if (navWatchId !== null) {
+        setNavLogStatus('Log GPS déjà actif.');
+        return;
+    }
+
+    navWatchId = navigator.geolocation.watchPosition(
+        position => {
+            const latitude = Number(position?.coords?.latitude);
+            const longitude = Number(position?.coords?.longitude);
+            const speedMs = Number(position?.coords?.speed);
+            navLatestSpeedKn = Number.isFinite(speedMs) ? speedMs * 1.943844 : null;
+
+            appendNavLogEntry({
+                lat: latitude,
+                lng: longitude,
+                speedKn: navLatestSpeedKn,
+                heelDeg: navLatestHeelDeg,
+                source: 'gps-watch'
+            });
+
+            setNavLogStatus(`Log GPS actif · ${navLogEntries.length} point(s)`);
+        },
+        error => {
+            const details = error?.message ? `: ${error.message}` : '';
+            setNavLogStatus(`Erreur GPS${details}`, true);
+        },
+        {
+            enableHighAccuracy: true,
+            maximumAge: 0,
+            timeout: 10000
+        }
+    );
+}
+
+function stopNavigationLogging() {
+    if (navWatchId !== null && navigator.geolocation) {
+        navigator.geolocation.clearWatch(navWatchId);
+        navWatchId = null;
+    }
+    setNavLogStatus(`Log GPS arrêté · ${navLogEntries.length} point(s) enregistrés.`);
+}
+
+function clearNavigationLogbook() {
+    stopNavigationLogging();
+    navLogEntries = [];
+    saveNavLogEntries();
+    renderNavLogList();
+    setNavLogStatus('Journal navigation effacé.');
+}
+
+function loadNavigationLogbook() {
+    navLogEntries = loadArrayFromStorage(NAV_LOG_STORAGE_KEY);
+    const watchTimeInput = document.getElementById('watchTimeInput');
+    if (watchTimeInput) {
+        watchTimeInput.value = toLocalDateTimeInputValue(new Date());
+    }
+    renderNavLogList();
+}
+
+function saveEngineLogEntries() {
+    saveArrayToStorage(ENGINE_LOG_STORAGE_KEY, engineLogEntries);
+    scheduleCloudLogbookPush();
+}
+
+function renderEngineLogList() {
+    const container = document.getElementById('engineLogList');
+    if (!container) return;
+
+    if (!Array.isArray(engineLogEntries) || engineLogEntries.length === 0) {
+        container.innerHTML = '<div class="log-card">Aucune entrée moteur pour le moment.</div>';
+        return;
+    }
+
+    container.innerHTML = engineLogEntries
+        .slice()
+        .reverse()
+        .map(entry => {
+            const hours = Number.isFinite(entry?.hours) ? `${entry.hours.toFixed(1)} h` : 'N/A';
+            const fuel = Number.isFinite(entry?.fuelAddedL) ? `${entry.fuelAddedL.toFixed(1)} L` : '0 L';
+            return `<div class="log-card"><strong>${formatDateTimeFr(entry?.timestamp)}</strong><br>Compteur: ${hours} · Carburant: ${fuel}<br>${escapeHtml(entry?.note || '')}</div>`;
+        })
+        .join('');
+}
+
+function addEngineLogEntryFromForm() {
+    const hoursInput = document.getElementById('engineHoursInput');
+    const fuelInput = document.getElementById('fuelAddedInput');
+    const noteInput = document.getElementById('engineLogNoteInput');
+
+    const hours = parseFloat(String(hoursInput?.value || ''));
+    const fuelAddedL = parseFloat(String(fuelInput?.value || ''));
+    const note = String(noteInput?.value || '').trim();
+
+    if (!Number.isFinite(hours)) {
+        alert('Renseigne le compteur moteur (heures).');
+        return;
+    }
+
+    engineLogEntries.push({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        timestamp: new Date().toISOString(),
+        hours,
+        fuelAddedL: Number.isFinite(fuelAddedL) ? Math.max(0, fuelAddedL) : 0,
+        note
+    });
+
+    if (engineLogEntries.length > 800) {
+        engineLogEntries = engineLogEntries.slice(engineLogEntries.length - 800);
+    }
+
+    saveEngineLogEntries();
+    renderEngineLogList();
+
+    if (fuelInput) fuelInput.value = '';
+    if (noteInput) noteInput.value = '';
+}
+
+function clearEngineLogbook() {
+    engineLogEntries = [];
+    saveEngineLogEntries();
+    renderEngineLogList();
+}
+
+function loadEngineLogbook() {
+    engineLogEntries = loadArrayFromStorage(ENGINE_LOG_STORAGE_KEY);
+    renderEngineLogList();
+}
+
+function ensureWeatherFocusMarker() {
+    if (!map || weatherFocusMarker) return;
+
+    const icon = L.divIcon({
+        className: 'weather-focus-icon',
+        html: '<div class="weather-focus-icon__dot"></div>',
+        iconSize: [18, 18],
+        iconAnchor: [9, 9]
+    });
+
+    weatherFocusMarker = L.marker([0, 0], {
+        icon,
+        keyboard: false,
+        interactive: false,
+        zIndexOffset: 1400
+    });
+}
+
+function setWeatherPointerPlacementMode(enabled) {
+    weatherPointerPlacementMode = Boolean(enabled);
+    if (!map) return;
+
+    const shouldUseCrosshair = weatherPointerPlacementMode && activeTabName === 'weather' && !measureModeEnabled;
+    map.getContainer().style.cursor = shouldUseCrosshair ? 'crosshair' : '';
+
+    const status = document.getElementById('weatherOutlookStatus');
+    if (status && weatherPointerPlacementMode) {
+        status.textContent = 'Météo: clique sur la carte pour placer le pointeur.';
+    }
+}
+
+function setWeatherFocusPoint(latlng, { refresh = true, sourceLabel = 'pointeur carte' } = {}) {
+    if (!Number.isFinite(latlng?.lat) || !Number.isFinite(latlng?.lng)) return;
+
+    weatherFocusPoint = { lat: latlng.lat, lng: latlng.lng };
+    ensureWeatherFocusMarker();
+    if (weatherFocusMarker) {
+        weatherFocusMarker.setLatLng([weatherFocusPoint.lat, weatherFocusPoint.lng]);
+        if (!map.hasLayer(weatherFocusMarker)) {
+            weatherFocusMarker.addTo(map);
+        }
+    }
+
+    const status = document.getElementById('weatherOutlookStatus');
+    if (status) {
+        status.textContent = `Météo: ${sourceLabel} (${weatherFocusPoint.lat.toFixed(4)}, ${weatherFocusPoint.lng.toFixed(4)})`;
+    }
+
+    if (refresh) {
+        refreshWeatherOutlook();
+    }
+}
+
+function computeWeatherImpactLabel(weather) {
+    const wind = Number(weather?.windSpeed);
+    const wave = Number(weather?.waveHeight);
+
+    if ((Number.isFinite(wind) && wind > 24) || (Number.isFinite(wave) && wave > 2.3)) {
+        return { text: 'À risque', className: 'weather-card weather-card--risk' };
+    }
+    if ((Number.isFinite(wind) && wind > 18) || (Number.isFinite(wave) && wave > 1.6)) {
+        return { text: 'Modéré', className: 'weather-card' };
+    }
+    return { text: 'Favorable', className: 'weather-card weather-card--ok' };
+}
+
+function getWeatherReferenceCoordinates(forceMapCenter = false) {
+    if (map && forceMapCenter) {
+        const center = map.getCenter();
+        return { lat: center.lat, lng: center.lng, source: 'centre carte' };
+    }
+
+    if (weatherFocusPoint && Number.isFinite(weatherFocusPoint.lat) && Number.isFinite(weatherFocusPoint.lng)) {
+        return { lat: weatherFocusPoint.lat, lng: weatherFocusPoint.lng, source: 'pointeur météo' };
+    }
+
+    if (routePoints.length > 0) {
+        const last = routePoints[routePoints.length - 1];
+        return { lat: last.lat, lng: last.lng, source: 'dernier waypoint' };
+    }
+
+    if (map) {
+        const center = map.getCenter();
+        return { lat: center.lat, lng: center.lng, source: 'centre carte' };
+    }
+
+    return null;
+}
+
+async function refreshWeatherOutlook({ forceMapCenter = false } = {}) {
+    const status = document.getElementById('weatherOutlookStatus');
+    const list = document.getElementById('weatherOutlookList');
+    if (!status || !list) return;
+
+    const focus = getWeatherReferenceCoordinates(forceMapCenter);
+    if (!focus) {
+        status.textContent = 'Météo: coordonnées indisponibles.';
+        return;
+    }
+
+    status.textContent = `Météo: chargement (${focus.source})...`;
+
+    try {
+        if (forceMapCenter && map) {
+            const center = map.getCenter();
+            setWeatherFocusPoint(center, { refresh: false, sourceLabel: 'centre carte' });
+        }
+
+        const current = await getCurrentWeatherAtWaypoint(focus.lat, focus.lng);
+
+        const dayOffsets = [1, 2, 3];
+        const forecastEntries = [];
+
+        for (const offset of dayOffsets) {
+            const target = new Date();
+            target.setUTCDate(target.getUTCDate() + offset);
+            target.setUTCHours(12, 0, 0, 0);
+            const slot = toDateAndHourUtc(target);
+            const weather = await getWeatherAtDateHour(focus.lat, focus.lng, slot.date, slot.hour);
+            forecastEntries.push({ slot, weather });
+        }
+
+        const nowImpact = computeWeatherImpactLabel(current);
+        const nowWind = Number.isFinite(current?.windSpeed) ? `${current.windSpeed.toFixed(1)} kn` : 'N/A';
+        const nowWave = Number.isFinite(current?.waveHeight) ? `${current.waveHeight.toFixed(1)} m` : 'N/A';
+        const nowTemp = Number.isFinite(current?.temperature) ? `${current.temperature.toFixed(1)}°C` : 'N/A';
+        const nowPressure = Number.isFinite(current?.pressure) ? `${current.pressure.toFixed(0)} hPa` : 'N/A';
+        const nowGust = Number.isFinite(current?.windGust) ? `${current.windGust.toFixed(1)} kn` : 'N/A';
+
+        const weatherSeries = [current, ...forecastEntries.map(entry => entry.weather)];
+        const tempEvolution = buildWeatherMetricEvolutionSummary(weatherSeries.map(entry => entry?.temperature), {
+            unit: '°C',
+            decimals: 1,
+            riseThreshold: 0.8,
+            fallThreshold: -0.8
+        });
+        const pressureEvolution = buildWeatherMetricEvolutionSummary(weatherSeries.map(entry => entry?.pressure), {
+            unit: ' hPa',
+            decimals: 0,
+            riseThreshold: 1.2,
+            fallThreshold: -1.2
+        });
+
+        const forecastHtml = forecastEntries.map(entry => {
+            const impact = computeWeatherImpactLabel(entry.weather);
+            const wind = Number.isFinite(entry.weather?.windSpeed) ? `${entry.weather.windSpeed.toFixed(1)} kn` : 'N/A';
+            const wave = Number.isFinite(entry.weather?.waveHeight) ? `${entry.weather.waveHeight.toFixed(1)} m` : 'N/A';
+            const dir = Number.isFinite(entry.weather?.windDirection) ? `${Math.round(entry.weather.windDirection)}° ${degreesToCardinalFr(entry.weather.windDirection)}` : 'N/A';
+            const rain = Number.isFinite(entry.weather?.precipitation) ? `${entry.weather.precipitation.toFixed(1)} mm` : 'N/A';
+            const temp = Number.isFinite(entry.weather?.temperature) ? `${entry.weather.temperature.toFixed(1)}°C` : 'N/A';
+            const pressure = Number.isFinite(entry.weather?.pressure) ? `${entry.weather.pressure.toFixed(0)} hPa` : 'N/A';
+            return `<div class="${impact.className}"><strong>${entry.slot.date} · 12:00 UTC</strong><br>Impact nav: ${impact.text}<br>Temp: ${temp} · Pression: ${pressure}<br>Vent: ${wind} (${dir}) · Rafales: ${Number.isFinite(entry.weather?.windGust) ? `${entry.weather.windGust.toFixed(1)} kn` : 'N/A'}<br>Houle: ${wave} · Pluie: ${rain}</div>`;
+        }).join('');
+
+        list.innerHTML =
+            `<div class="${nowImpact.className}"><strong>Conditions actuelles</strong><br>Impact nav: ${nowImpact.text}<br>Temp: ${nowTemp} · Pression: ${nowPressure}<br>Vent: ${nowWind} · Rafales: ${nowGust}<br>Houle: ${nowWave}</div>` +
+            `<div class="weather-card"><strong>Évolution actuelle → J+3</strong><br>Température: ${tempEvolution}<br>Pression: ${pressureEvolution}</div>` +
+            forecastHtml;
+
+        status.textContent = `Météo: ${focus.source} (${focus.lat.toFixed(4)}, ${focus.lng.toFixed(4)})`;
+    } catch (_error) {
+        status.textContent = 'Météo: impossible de récupérer les prévisions.';
+        list.innerHTML = '';
+    }
+}
+
 // =====================
 // INIT MAP
 // =====================
 
 document.addEventListener('DOMContentLoaded', async function() {
-    map = L.map('map').setView([41.3851, 2.1734], 8);
+    const savedMapView = loadSavedMapView();
+    const initialLat = savedMapView?.lat ?? 41.3851;
+    const initialLng = savedMapView?.lng ?? 2.1734;
+    const initialZoom = savedMapView?.zoom ?? 8;
+    map = L.map('map').setView([initialLat, initialLng], initialZoom);
 
     standardTileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap',
@@ -2717,12 +3882,35 @@ document.addEventListener('DOMContentLoaded', async function() {
         crossOrigin: true
     });
 
+    marineDepthLayer = L.tileLayer('https://services.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}', {
+        attribution: 'Bathymétrie © Esri, GEBCO, NOAA',
+        opacity: 0.85,
+        maxNativeZoom: 10,
+        errorTileUrl: TRANSPARENT_TILE_DATA_URI,
+        crossOrigin: true
+    });
+
+    marineHazardLayer = L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
+        attribution: 'Dangers maritimes © OpenSeaMap',
+        opacity: 0.95,
+        maxNativeZoom: 18,
+        errorTileUrl: TRANSPARENT_TILE_DATA_URI,
+        crossOrigin: true
+    });
+
+    const openWeatherTileAppId = getStoredOpenWeatherTileAppId();
+    isobarLayer = createIsobarOverlayLayer(openWeatherTileAppId);
+
     baseLayerControl = L.control.layers(
         {
             'Standard': standardTileLayer,
             'Satellite': satelliteTileLayer
         },
-        {},
+        {
+            'Maritime · Profondeurs': marineDepthLayer,
+            'Maritime · Dangers': marineHazardLayer,
+            'Météo · Isobares (pression · clé OWM)': isobarLayer
+        },
         { position: 'topright', collapsed: false }
     ).addTo(map);
 
@@ -2738,6 +3926,12 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     // Setup event listeners after map is ready
     map.on('click', function(e) {
+        if (weatherPointerPlacementMode && activeTabName === 'weather') {
+            setWeatherFocusPoint(e.latlng, { refresh: true, sourceLabel: 'pointeur carte' });
+            setWeatherPointerPlacementMode(false);
+            return;
+        }
+
         if (measureModeEnabled) {
             addMeasurePoint(e.latlng);
             return;
@@ -2746,7 +3940,10 @@ document.addEventListener('DOMContentLoaded', async function() {
         addUserWaypoint(e.latlng);
     });
 
-    map.on('moveend zoomend', syncWaypointPhotoMarkersInView);
+    map.on('moveend zoomend', () => {
+        syncWaypointPhotoMarkersInView();
+        persistMapView();
+    });
 
     // =====================
     // DATE & TIME INPUT
@@ -2769,37 +3966,64 @@ document.addEventListener('DOMContentLoaded', async function() {
     const routingTabBtn = document.getElementById('routingTabBtn');
     const routesTabBtn = document.getElementById('routesTabBtn');
     const cloudTabBtn = document.getElementById('cloudTabBtn');
+    const navLogTabBtn = document.getElementById('navLogTabBtn');
+    const engineTabBtn = document.getElementById('engineTabBtn');
+    const weatherTabBtn = document.getElementById('weatherTabBtn');
     const arrivalTabBtn = document.getElementById('arrivalTabBtn');
     const waypointTabBtn = document.getElementById('waypointTabBtn');
     const routingTab = document.getElementById('routingTab');
     const routesTab = document.getElementById('routesTab');
     const cloudTab = document.getElementById('cloudTab');
+    const navLogTab = document.getElementById('navLogTab');
+    const engineTab = document.getElementById('engineTab');
+    const weatherTab = document.getElementById('weatherTab');
     const arrivalTab = document.getElementById('arrivalTab');
     const waypointTab = document.getElementById('waypointTab');
 
     function activateTab(tabName) {
+        activeTabName = tabName;
         const isRouting = tabName === 'routing';
         const isRoutes = tabName === 'routes';
         const isCloud = tabName === 'cloud';
+        const isNavLog = tabName === 'navlog';
+        const isEngine = tabName === 'engine';
+        const isWeather = tabName === 'weather';
         const isArrival = tabName === 'arrival';
         const isWaypoint = tabName === 'waypoint';
 
         routingTabBtn.classList.toggle('active', isRouting);
         routesTabBtn.classList.toggle('active', isRoutes);
         cloudTabBtn.classList.toggle('active', isCloud);
+        navLogTabBtn.classList.toggle('active', isNavLog);
+        engineTabBtn.classList.toggle('active', isEngine);
+        weatherTabBtn.classList.toggle('active', isWeather);
         arrivalTabBtn.classList.toggle('active', isArrival);
         waypointTabBtn.classList.toggle('active', isWaypoint);
 
         routingTab.classList.toggle('active', isRouting);
         routesTab.classList.toggle('active', isRoutes);
         cloudTab.classList.toggle('active', isCloud);
+        navLogTab.classList.toggle('active', isNavLog);
+        engineTab.classList.toggle('active', isEngine);
+        weatherTab.classList.toggle('active', isWeather);
         arrivalTab.classList.toggle('active', isArrival);
         waypointTab.classList.toggle('active', isWaypoint);
+
+        if (isWeather) {
+            refreshWeatherOutlook();
+        }
+
+        if (!isWeather) {
+            setWeatherPointerPlacementMode(false);
+        }
     }
 
     routingTabBtn.addEventListener('click', () => activateTab('routing'));
     routesTabBtn.addEventListener('click', () => activateTab('routes'));
     cloudTabBtn.addEventListener('click', () => activateTab('cloud'));
+    navLogTabBtn.addEventListener('click', () => activateTab('navlog'));
+    engineTabBtn.addEventListener('click', () => activateTab('engine'));
+    weatherTabBtn.addEventListener('click', () => activateTab('weather'));
     arrivalTabBtn.addEventListener('click', () => activateTab('arrival'));
     waypointTabBtn.addEventListener('click', () => activateTab('waypoint'));
 
@@ -2849,6 +4073,24 @@ document.addEventListener('DOMContentLoaded', async function() {
     const suggestDepartureBtn = document.getElementById('suggestDepartureBtn');
     if (suggestDepartureBtn) {
         suggestDepartureBtn.addEventListener('click', suggestBestDeparture);
+    }
+
+    const suggestAiRoutesBtn = document.getElementById('suggestAiRoutesBtn');
+    if (suggestAiRoutesBtn) {
+        suggestAiRoutesBtn.addEventListener('click', suggestAiRouteOptions);
+    }
+
+    const aiRouteSuggestions = document.getElementById('aiRouteSuggestions');
+    if (aiRouteSuggestions) {
+        aiRouteSuggestions.addEventListener('click', event => {
+            const target = event.target;
+            if (!(target instanceof HTMLElement)) return;
+            const indexRaw = target.getAttribute('data-ai-route-index');
+            if (indexRaw === null) return;
+            const index = parseInt(indexRaw, 10);
+            if (!Number.isFinite(index)) return;
+            applyAiRouteCandidate(index);
+        });
     }
 
     const departureSuggestionInfo = document.getElementById('departureSuggestionInfo');
@@ -2901,6 +4143,193 @@ document.addEventListener('DOMContentLoaded', async function() {
         cancelWaypointPhotoEditBtn.addEventListener('click', cancelWaypointPhotoEdit);
     }
 
+    const startNavLogBtn = document.getElementById('startNavLogBtn');
+    if (startNavLogBtn) {
+        startNavLogBtn.addEventListener('click', startNavigationLogging);
+    }
+
+    const stopNavLogBtn = document.getElementById('stopNavLogBtn');
+    if (stopNavLogBtn) {
+        stopNavLogBtn.addEventListener('click', stopNavigationLogging);
+    }
+
+    const requestMotionPermissionBtn = document.getElementById('requestMotionPermissionBtn');
+    if (requestMotionPermissionBtn) {
+        requestMotionPermissionBtn.addEventListener('click', requestMotionPermissionIfNeeded);
+    }
+
+    const clearNavLogBtn = document.getElementById('clearNavLogBtn');
+    if (clearNavLogBtn) {
+        clearNavLogBtn.addEventListener('click', clearNavigationLogbook);
+    }
+
+    const addManualNavLogBtn = document.getElementById('addManualNavLogBtn');
+    if (addManualNavLogBtn) {
+        addManualNavLogBtn.addEventListener('click', addManualNavigationLogEntry);
+    }
+
+    const saveEngineLogBtn = document.getElementById('saveEngineLogBtn');
+    if (saveEngineLogBtn) {
+        saveEngineLogBtn.addEventListener('click', addEngineLogEntryFromForm);
+    }
+
+    const clearEngineLogBtn = document.getElementById('clearEngineLogBtn');
+    if (clearEngineLogBtn) {
+        clearEngineLogBtn.addEventListener('click', clearEngineLogbook);
+    }
+
+    const useMapCenterWeatherBtn = document.getElementById('useMapCenterWeatherBtn');
+    if (useMapCenterWeatherBtn) {
+        useMapCenterWeatherBtn.addEventListener('click', () => {
+            if (!map) return;
+            const center = map.getCenter();
+            setWeatherFocusPoint(center, { refresh: true, sourceLabel: 'centre carte' });
+        });
+    }
+
+    const placeWeatherPointerBtn = document.getElementById('placeWeatherPointerBtn');
+    if (placeWeatherPointerBtn) {
+        placeWeatherPointerBtn.addEventListener('click', () => {
+            activateTab('weather');
+            setWeatherPointerPlacementMode(true);
+        });
+    }
+
+    const refreshWeatherOutlookBtn = document.getElementById('refreshWeatherOutlookBtn');
+    if (refreshWeatherOutlookBtn) {
+        refreshWeatherOutlookBtn.addEventListener('click', () => refreshWeatherOutlook());
+    }
+
+    const owmApiKeyInput = document.getElementById('owmApiKeyInput');
+    const owmApiKeyStatus = document.getElementById('owmApiKeyStatus');
+    if (owmApiKeyInput) {
+        owmApiKeyInput.value = getStoredOpenWeatherTileAppId();
+    }
+
+    const testOwmApiKeyBtn = document.getElementById('testOwmApiKeyBtn');
+    if (testOwmApiKeyBtn) {
+        testOwmApiKeyBtn.addEventListener('click', async () => {
+            const keyValue = String(owmApiKeyInput?.value || '').trim();
+            if (owmApiKeyStatus) owmApiKeyStatus.textContent = 'Clé OWM: test en cours...';
+
+            const result = await testOpenWeatherApiKey(keyValue);
+            if (owmApiKeyStatus) {
+                owmApiKeyStatus.textContent = result.ok
+                    ? `Clé OWM: ✅ ${result.message}`
+                    : `Clé OWM: ❌ ${result.message}`;
+            }
+        });
+    }
+
+    const saveOwmApiKeyBtn = document.getElementById('saveOwmApiKeyBtn');
+    if (saveOwmApiKeyBtn) {
+        saveOwmApiKeyBtn.addEventListener('click', () => {
+            const keyValue = String(owmApiKeyInput?.value || '').trim();
+            if (!keyValue) {
+                alert('Renseigne une clé API OpenWeatherMap.');
+                return;
+            }
+            localStorage.setItem(OWM_TILE_APPID_STORAGE_KEY, keyValue);
+            if (owmApiKeyStatus) owmApiKeyStatus.textContent = 'Clé OWM: enregistrée (non testée).';
+            alert('Clé OWM enregistrée. Recharge la page pour activer la couche isobares.');
+        });
+    }
+
+    const clearOwmApiKeyBtn = document.getElementById('clearOwmApiKeyBtn');
+    if (clearOwmApiKeyBtn) {
+        clearOwmApiKeyBtn.addEventListener('click', () => {
+            localStorage.removeItem(OWM_TILE_APPID_STORAGE_KEY);
+            if (owmApiKeyInput) owmApiKeyInput.value = '';
+            if (owmApiKeyStatus) owmApiKeyStatus.textContent = 'Clé OWM: supprimée.';
+            alert('Clé OWM supprimée. Recharge la page.');
+        });
+    }
+
+    const cloudEmailSignInBtn = document.getElementById('cloudEmailSignInBtn');
+    if (cloudEmailSignInBtn) {
+        cloudEmailSignInBtn.addEventListener('click', async () => {
+            if (!cloudClient) {
+                const config = readCloudConfigFromForm();
+                const connected = await connectCloud(config);
+                if (!connected) return;
+            }
+
+            const { email, password } = readCloudUserCredentials();
+            if (!email || !password) {
+                setCloudAuthStatus('Renseigne email + mot de passe.', true);
+                return;
+            }
+
+            try {
+                const { error } = await cloudClient.auth.signInWithPassword({ email, password });
+                if (error) throw error;
+                setCloudAuthStatus(`Connexion email OK (${email})`);
+            } catch (error) {
+                setCloudAuthStatus(`Connexion email impossible: ${formatCloudError(error)}`, true);
+            }
+        });
+    }
+
+    const cloudEmailSignUpBtn = document.getElementById('cloudEmailSignUpBtn');
+    if (cloudEmailSignUpBtn) {
+        cloudEmailSignUpBtn.addEventListener('click', async () => {
+            if (!cloudClient) {
+                const config = readCloudConfigFromForm();
+                const connected = await connectCloud(config);
+                if (!connected) return;
+            }
+
+            const { email, password } = readCloudUserCredentials();
+            if (!email || !password) {
+                setCloudAuthStatus('Renseigne email + mot de passe.', true);
+                return;
+            }
+
+            if (password.length < 8) {
+                setCloudAuthStatus('Mot de passe trop court (minimum 8 caractères).', true);
+                return;
+            }
+
+            try {
+                const { data, error } = await cloudClient.auth.signUp({ email, password });
+                if (error) throw error;
+
+                if (data?.user && !data?.session) {
+                    setCloudAuthStatus(`Compte créé (${email}). Vérifie l'email de confirmation.`);
+                } else {
+                    setCloudAuthStatus(`Compte créé et connecté (${email}).`);
+                }
+            } catch (error) {
+                setCloudAuthStatus(`Création compte impossible: ${formatCloudError(error)}`, true);
+            }
+        });
+    }
+
+    const cloudSignOutBtn = document.getElementById('cloudSignOutBtn');
+    if (cloudSignOutBtn) {
+        cloudSignOutBtn.addEventListener('click', async () => {
+            if (!cloudClient) return;
+            try {
+                await cloudClient.auth.signOut();
+                cloudAuthUser = null;
+                updateCloudAuthUi();
+            } catch (error) {
+                setCloudAuthStatus(`Déconnexion impossible: ${formatCloudError(error)}`, true);
+            }
+        });
+    }
+
+    const aiTrafficCloseBtn = document.getElementById('aiTrafficCloseBtn');
+    if (aiTrafficCloseBtn) {
+        aiTrafficCloseBtn.addEventListener('click', () => {
+            if (aiTrafficAutoHideTimer) {
+                clearTimeout(aiTrafficAutoHideTimer);
+                aiTrafficAutoHideTimer = null;
+            }
+            hideAiTrafficOverlay();
+        });
+    }
+
     updateMeasureInfo();
     updateSelectedWaypointInfo();
     setMeasureMode(false);
@@ -2939,6 +4368,11 @@ document.addEventListener('DOMContentLoaded', async function() {
             suggestionBox.textContent = 'Suggestion départ: en attente';
             suggestionBox.classList.remove('suggestion-clickable');
         }
+        const aiInfo = document.getElementById('aiRouteSuggestionInfo');
+        const aiList = document.getElementById('aiRouteSuggestions');
+        lastAiRouteCandidates = [];
+        if (aiInfo) aiInfo.textContent = 'Routes IA: en attente';
+        if (aiList) aiList.innerHTML = '';
         const arrivalSummary = document.getElementById('arrivalSummary');
         if (arrivalSummary) arrivalSummary.textContent = 'Analyse mouillage: en attente';
         const anchorageContainer = document.getElementById('anchorageRecommendations');
@@ -2981,37 +4415,11 @@ document.addEventListener('DOMContentLoaded', async function() {
     }
     document.getElementById('importRouteInput').addEventListener('change', handleImport);
 
-    const cloudConnectBtn = document.getElementById('cloudConnectBtn');
-    if (cloudConnectBtn) {
-        cloudConnectBtn.addEventListener('click', async () => {
-            if (!isCloudPasswordValid()) {
-                setCloudStatus('Mot de passe cloud invalide', true);
-                return;
-            }
-            const config = readCloudConfigFromForm();
-            await connectCloud(config);
-        });
-    }
-
-    const cloudPasswordInput = document.getElementById('cloudPasswordInput');
-    if (cloudPasswordInput) {
-        cloudPasswordInput.addEventListener('keydown', async (e) => {
-            if (e.key !== 'Enter') return;
-            e.preventDefault();
-            if (!isCloudPasswordValid()) {
-                setCloudStatus('Mot de passe cloud invalide', true);
-                return;
-            }
-            const config = readCloudConfigFromForm();
-            await connectCloud(config);
-        });
-    }
-
     const cloudRefreshBtn = document.getElementById('cloudRefreshBtn');
     if (cloudRefreshBtn) {
         cloudRefreshBtn.addEventListener('click', async () => {
             if (!isCloudReady()) {
-                setCloudStatus('Cloud non connecté (utilise "Connecter cloud")', true);
+                setCloudStatus('Cloud non connecté', true);
                 return;
             }
 
@@ -3038,6 +4446,9 @@ document.addEventListener('DOMContentLoaded', async function() {
     setWaypointPhotoEditMode(null);
     renderWaypointPhotoList();
     syncWaypointPhotoMarkersInView();
+    loadNavigationLogbook();
+    loadEngineLogbook();
+    updateCloudAuthUi();
 
     setSavedRoutes(loadRoutesFromLocalStorage());
     refreshSavedList();
@@ -3045,19 +4456,17 @@ document.addEventListener('DOMContentLoaded', async function() {
     const storedCloudConfig = loadCloudConfigFromStorage();
     updateCloudFormFromConfig(storedCloudConfig);
     if (storedCloudConfig) {
-        if (isCloudPasswordValid()) {
-            await connectCloud(storedCloudConfig, { silent: true });
-        } else {
-            setCloudStatus('Entre le mot de passe cloud puis clique "Connecter cloud"');
-        }
+        await connectCloud(storedCloudConfig, { silent: true });
     } else {
         const hiddenConfig = readCloudConfigFromForm();
         if (hiddenConfig?.url && hiddenConfig?.anonKey && hiddenConfig?.projectKey) {
-            setCloudStatus('Entre le mot de passe cloud puis clique "Connecter cloud"');
+            await connectCloud(hiddenConfig, { silent: true });
         } else {
             setCloudStatus('Mode local (pas de cloud configuré)');
         }
     }
+
+    refreshWeatherOutlook();
 });
 
 // =====================
@@ -3361,7 +4770,18 @@ async function computeRoute() {
             activeDisplaySegment.arrivalLabel = formatWeekdayHourUtc(segmentArrivalDateTime);
             activeDisplaySegment.windSpeed = Math.max(Number(activeDisplaySegment.windSpeed) || 0, wind.speed).toFixed(1);
             activeDisplaySegment.windDirection = Math.round(wind.direction);
-            activeDisplaySegment.bearing = Math.round(getBearing(activeDisplaySegment.startLatLng, endPoint));
+            const bearingStart = {
+                lat: activeDisplaySegment.startLatLng?.lat,
+                lon: activeDisplaySegment.startLatLng?.lon ?? activeDisplaySegment.startLatLng?.lng
+            };
+            const bearingEnd = {
+                lat: endPoint?.lat,
+                lon: endPoint?.lon ?? endPoint?.lng
+            };
+            const updatedBearing = getBearing(bearingStart, bearingEnd);
+            if (Number.isFinite(updatedBearing)) {
+                activeDisplaySegment.bearing = Math.round(updatedBearing);
+            }
 
             if (activeDisplaySegment.type !== segment.type) {
                 activeDisplaySegment.type = 'mixed';
@@ -3567,9 +4987,19 @@ function toDateAndHourUtc(dateObj) {
 }
 
 function formatWeekdayHourUtc(dateObj) {
-    const weekday = dateObj.toLocaleDateString('fr-FR', { weekday: 'short' }).replace('.', '');
-    const hour = String(dateObj.getHours()).padStart(2, '0');
-    return `${weekday} ${hour}h`;
+    if (!(dateObj instanceof Date) || Number.isNaN(dateObj.getTime())) return 'N/A';
+
+    const rounded = new Date(dateObj.getTime());
+    const minutes = rounded.getMinutes();
+    const roundedMinutes = Math.round(minutes / 10) * 10;
+    rounded.setMinutes(roundedMinutes, 0, 0);
+
+    const weekday = rounded.toLocaleDateString('fr-FR', { weekday: 'long' });
+    const day = rounded.getDate();
+    const hour = String(rounded.getHours()).padStart(2, '0');
+    const minute = String(rounded.getMinutes()).padStart(2, '0');
+
+    return `${weekday} ${day} ${hour}h${minute}`;
 }
 
 function formatLocalSlotLabel(slot) {
@@ -3596,6 +5026,27 @@ function buildPressureEvolutionSummary(waypointPassageWeather) {
     if (delta < -0.8) trend = 'baisse';
 
     return `${firstPressure.toFixed(0)} → ${lastPressure.toFixed(0)} hPa (${roundedDelta}, ${trend})`;
+}
+
+function buildWeatherMetricEvolutionSummary(values, {
+    unit = '',
+    decimals = 1,
+    riseThreshold = 0.8,
+    fallThreshold = -0.8
+} = {}) {
+    const series = Array.isArray(values) ? values.filter(value => Number.isFinite(value)) : [];
+    if (series.length < 2) return 'Données insuffisantes';
+
+    const first = series[0];
+    const last = series[series.length - 1];
+    const delta = last - first;
+    const sign = delta >= 0 ? '+' : '';
+
+    let trend = 'stable';
+    if (delta > riseThreshold) trend = 'hausse';
+    if (delta < fallThreshold) trend = 'baisse';
+
+    return `${first.toFixed(decimals)} → ${last.toFixed(decimals)}${unit} (${sign}${delta.toFixed(decimals)}${unit}, ${trend})`;
 }
 
 function weatherCodeToLabel(code) {
@@ -4367,12 +5818,16 @@ async function pullRoutesFromCloud() {
     const rawPayload = data?.routes;
     let rawRoutes = [];
     let rawWaypointPhotos = null;
+    let rawNavLogEntries = null;
+    let rawEngineLogEntries = null;
 
     if (Array.isArray(rawPayload)) {
         rawRoutes = rawPayload;
     } else if (rawPayload && typeof rawPayload === 'object') {
         rawRoutes = Array.isArray(rawPayload.routes) ? rawPayload.routes : [];
         rawWaypointPhotos = Array.isArray(rawPayload.waypointPhotos) ? rawPayload.waypointPhotos : [];
+        rawNavLogEntries = Array.isArray(rawPayload.navLogEntries) ? rawPayload.navLogEntries : [];
+        rawEngineLogEntries = Array.isArray(rawPayload.engineLogEntries) ? rawPayload.engineLogEntries : [];
     }
 
     const cloudRoutes = rawRoutes.map((route, index) => sanitizeSavedRoute(route, index));
@@ -4382,15 +5837,29 @@ async function pullRoutesFromCloud() {
         setWaypointPhotoEntries(rawWaypointPhotos, { persistLocal: true, refreshUi: true });
     }
 
+    if (Array.isArray(rawNavLogEntries)) {
+        navLogEntries = rawNavLogEntries;
+        saveArrayToStorage(NAV_LOG_STORAGE_KEY, navLogEntries);
+        renderNavLogList();
+    }
+
+    if (Array.isArray(rawEngineLogEntries)) {
+        engineLogEntries = rawEngineLogEntries;
+        saveArrayToStorage(ENGINE_LOG_STORAGE_KEY, engineLogEntries);
+        renderEngineLogList();
+    }
+
     return cloudRoutes;
 }
 
 async function pushRoutesToCloud() {
     if (!isCloudReady()) return false;
     const payload = {
-        version: 2,
+        version: 3,
         routes: getSavedRoutes(),
-        waypointPhotos: waypointPhotoEntries
+        waypointPhotos: waypointPhotoEntries,
+        navLogEntries,
+        engineLogEntries
     };
 
     const { error } = await cloudClient
@@ -4423,26 +5892,19 @@ function readCloudConfigFromForm() {
     return { url, anonKey, projectKey };
 }
 
-function getCloudPasswordPreset() {
-    return String(document.getElementById('cloudPasswordPreset')?.value || '').trim();
-}
-
-function getCloudEnteredPassword() {
-    return String(document.getElementById('cloudPasswordInput')?.value || '').trim();
-}
-
-function isCloudPasswordValid() {
-    const preset = getCloudPasswordPreset();
-    if (!preset) return true;
-    return getCloudEnteredPassword() === preset;
-}
-
 async function connectCloud(config, { silent = false } = {}) {
     if (!config?.url || !config?.anonKey || !config?.projectKey) {
         stopCloudAutoSync();
+        if (cloudLogbookPushTimer) {
+            clearTimeout(cloudLogbookPushTimer);
+            cloudLogbookPushTimer = null;
+        }
+        unsubscribeCloudAuthSubscription();
         cloudClient = null;
         cloudConfig = null;
         cloudConnected = false;
+        cloudAuthUser = null;
+        updateCloudAuthUi();
         if (!silent) setCloudStatus('Mode local (paramètres cloud incomplets)');
         return false;
     }
@@ -4456,13 +5918,21 @@ async function connectCloud(config, { silent = false } = {}) {
             cloudConfig.projectKey === config.projectKey;
 
         if (!isSameConfig) {
+            unsubscribeCloudAuthSubscription();
+
             cloudClient = createClient(config.url, config.anonKey, {
                 auth: {
-                    persistSession: false,
-                    autoRefreshToken: false,
-                    detectSessionInUrl: false,
+                    persistSession: true,
+                    autoRefreshToken: true,
+                    detectSessionInUrl: true,
                     storageKey: `ceibo-supabase-${config.projectKey}`
                 }
+            });
+
+            cloudAuthSubscription = cloudClient.auth.onAuthStateChange((_event, session) => {
+                cloudAuthUser = session?.user || null;
+                updateCloudAuthUi();
+                void enforceCloudWhitelistForCurrentUser();
             });
         }
 
@@ -4470,15 +5940,23 @@ async function connectCloud(config, { silent = false } = {}) {
         const routes = await pullRoutesFromCloud();
         saveCloudConfigToStorage(config);
         cloudConnected = true;
+        await refreshCloudAuthSession();
         startCloudAutoSync();
         refreshSavedList();
         setCloudStatus(`Cloud connecté · ${routes.length} route(s) partagée(s)`);
         return true;
     } catch (error) {
         stopCloudAutoSync();
+        if (cloudLogbookPushTimer) {
+            clearTimeout(cloudLogbookPushTimer);
+            cloudLogbookPushTimer = null;
+        }
+        unsubscribeCloudAuthSubscription();
         cloudClient = null;
         cloudConfig = null;
         cloudConnected = false;
+        cloudAuthUser = null;
+        updateCloudAuthUi();
         setCloudStatus(`Connexion cloud impossible: ${formatCloudError(error)}`, true);
         return false;
     }
@@ -4592,6 +6070,11 @@ function clearCurrentRoute() {
         suggestionBox.textContent = 'Suggestion départ: en attente';
         suggestionBox.classList.remove('suggestion-clickable');
     }
+    const aiInfo = document.getElementById('aiRouteSuggestionInfo');
+    const aiList = document.getElementById('aiRouteSuggestions');
+    lastAiRouteCandidates = [];
+    if (aiInfo) aiInfo.textContent = 'Routes IA: en attente';
+    if (aiList) aiList.innerHTML = '';
     const arrivalSummary = document.getElementById('arrivalSummary');
     if (arrivalSummary) arrivalSummary.textContent = 'Analyse mouillage: en attente';
     const anchorageContainer = document.getElementById('anchorageRecommendations');
