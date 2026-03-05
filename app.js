@@ -5930,6 +5930,8 @@ function startCloudAutoSync() {
 async function pullRoutesFromCloud() {
     if (!isCloudReady()) return getSavedRoutes();
 
+    const localRoutesBeforePull = [...getSavedRoutes()];
+
     const { data, error } = await cloudClient
         .from(CLOUD_TABLE_NAME)
         .select('routes')
@@ -5939,6 +5941,12 @@ async function pullRoutesFromCloud() {
     if (error) throw error;
 
     const rawPayload = data?.routes;
+    const hasCloudPayload = rawPayload !== undefined && rawPayload !== null;
+
+    if (!hasCloudPayload) {
+        return localRoutesBeforePull;
+    }
+
     let rawRoutes = [];
     let rawWaypointPhotos = null;
     let rawNavLogEntries = null;
