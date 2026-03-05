@@ -196,12 +196,15 @@ function setProtectedTabsEnabled(enabled) {
 
     protectedTabIds.forEach(id => {
         const button = document.getElementById(id);
-        if (button) button.disabled = !enabled;
+        if (button) {
+            button.disabled = !enabled;
+            button.classList.toggle('tab-btn--locked', !enabled);
+        }
     });
 }
 
 function clearProtectedUiData() {
-    setSavedRoutes([]);
+    savedRoutesCache = [];
     refreshSavedList();
     setWaypointPhotoEntries([], { persistLocal: false, refreshUi: true });
     navLogEntries = [];
@@ -232,7 +235,7 @@ async function applyAuthGateState({ clearWhenLocked = true } = {}) {
 
     if (!protectedDataLoaded) {
         if (isAuthRequiredRuntime()) {
-            setSavedRoutes([]);
+            savedRoutesCache = [];
             refreshSavedList();
             setWaypointPhotoEntries([], { persistLocal: false, refreshUi: true });
             navLogEntries = [];
@@ -258,7 +261,17 @@ async function applyAuthGateState({ clearWhenLocked = true } = {}) {
             refreshSavedList();
             setCloudStatus(`Cloud connecté · ${routes.length} route(s) partagée(s)`);
         } catch (error) {
-            setCloudStatus(`Récupération cloud impossible: ${formatCloudError(error)}`, true);
+            const localRoutes = loadRoutesFromLocalStorage();
+            if (localRoutes.length > 0) {
+                setSavedRoutes(localRoutes);
+                refreshSavedList();
+                loadWaypointPhotoEntries();
+                renderWaypointPhotoList();
+                syncWaypointPhotoMarkersInView();
+                setCloudStatus(`Cloud indisponible, affichage cache local (${localRoutes.length} route(s))`, true);
+            } else {
+                setCloudStatus(`Récupération cloud impossible: ${formatCloudError(error)}`, true);
+            }
         }
     }
 }

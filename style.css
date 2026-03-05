@@ -104,6 +104,21 @@ body {
     background: #ff9a3a;
 }
 
+.sidebar-tabs .tab-btn:disabled,
+.sidebar-tabs .tab-btn.tab-btn--locked {
+    opacity: 0.45;
+    background: #3b3b3b;
+    border-color: #4a4a4a;
+    color: #cfcfcf;
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
+.sidebar-tabs .tab-btn:disabled:hover,
+.sidebar-tabs .tab-btn.tab-btn--locked:hover {
+    background: #3b3b3b;
+}
+
 .tab-panel {
     display: none;
 }
