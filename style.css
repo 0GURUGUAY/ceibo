@@ -124,6 +124,77 @@ body {
     object-fit: contain;
 }
 
+#maintenanceInvoicePreviewPanel {
+    flex: 1;
+    height: 100%;
+    min-width: 0;
+    display: none;
+    padding: 10px;
+    box-sizing: border-box;
+    background: #0e141d;
+}
+
+.maintenance-invoice-preview-shell {
+    height: 100%;
+    width: 100%;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 10px;
+    overflow: hidden;
+    background: #0f1824;
+    display: flex;
+    flex-direction: column;
+}
+
+#maintenanceInvoicePreviewImage,
+#maintenanceInvoicePreviewPdfContainer {
+    flex: 1;
+}
+
+#maintenanceInvoicePreviewPdfContainer {
+    display: none;
+    overflow: auto;
+    background: #1a1f27;
+    padding: 10px;
+    user-select: text;
+}
+
+.maintenance-pdf-page {
+    position: relative;
+    margin: 0 auto 12px auto;
+    background: #fff;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.28);
+}
+
+.maintenance-pdf-canvas {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.maintenance-pdf-text-layer {
+    position: absolute;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    overflow: hidden;
+    user-select: text;
+    cursor: text;
+}
+
+.maintenance-pdf-text-layer span {
+    position: absolute;
+    white-space: pre;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    transform-origin: 0% 0%;
+    line-height: 1;
+}
+
+.maintenance-pdf-text-layer span::selection {
+    background: rgba(76, 163, 255, 0.38);
+}
+
 .sidebar-tabs {
     display: flex;
     flex-wrap: wrap;
@@ -257,6 +328,29 @@ button:hover {
 
 button:active {
     transform: translateY(1px);
+}
+
+.maintenance-supplier-suggestions {
+    margin-top: 6px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.maintenance-supplier-suggestion-btn {
+    width: auto;
+    margin-top: 0;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: #1b2a3c;
+    border: 1px solid #2f4765;
+    font-size: 12px;
+    font-weight: 600;
+    box-shadow: none;
+}
+
+.maintenance-supplier-suggestion-btn:hover {
+    background: #22364e;
 }
 
 button:focus-visible {
@@ -427,6 +521,31 @@ button:focus-visible {
     align-items: flex-end;
 }
 
+.maintenance-subtabs {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.maintenance-subtab-btn {
+    margin-top: 0;
+    width: auto;
+    flex: 1;
+    font-size: 12px;
+}
+
+.maintenance-subtab-btn.active {
+    background: #ff9a3a;
+}
+
+.maintenance-subpanel {
+    display: none;
+}
+
+.maintenance-subpanel.active {
+    display: block;
+}
+
 .maintenance-toggle-btn {
     width: 100%;
     margin-top: 8px;
@@ -489,6 +608,18 @@ button:focus-visible {
     transform: translate(-50%, -50%);
 }
 
+.maintenance-pin--done::after {
+    content: '';
+    position: absolute;
+    left: -4px;
+    right: -4px;
+    top: 50%;
+    height: 2px;
+    background: rgba(255, 255, 255, 0.95);
+    transform: rotate(-28deg);
+    transform-origin: center;
+}
+
 .maintenance-pin--active {
     width: 18px;
     height: 18px;
@@ -516,6 +647,50 @@ button:focus-visible {
     font-size: 12px;
     line-height: 1.35;
     cursor: pointer;
+}
+
+.maintenance-legend-item--done strong {
+    text-decoration: line-through;
+}
+
+.maintenance-status-badge {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 2px 6px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.maintenance-expense-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.maintenance-expense-card,
+.maintenance-supplier-card {
+    margin-top: 8px;
+    padding: 8px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    font-size: 12px;
+    line-height: 1.35;
+}
+
+.maintenance-expense-line {
+    margin-top: 3px;
+    opacity: 0.92;
+}
+
+.maintenance-card-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 6px;
 }
 
 .maintenance-legend-item--active {
@@ -593,6 +768,14 @@ button:focus-visible {
     padding: 4px 8px;
     font-size: 11px;
     border-radius: 8px;
+}
+
+.maintenance-status-select {
+    width: auto;
+    margin-top: 0;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    background: rgba(255, 255, 255, 0.96);
 }
 
 .log-card,

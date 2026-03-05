@@ -101,6 +101,14 @@ let maintenanceBoards = [];
 let selectedMaintenanceBoardId = null;
 let activeMaintenanceAnnotationId = null;
 let maintenanceSchemaManagerVisible = false;
+let maintenanceExpenses = [];
+let maintenanceSuppliers = [];
+let activeMaintenanceSubtab = 'tasks';
+let maintenanceTesseractLoader = null;
+let maintenancePdfJsLoader = null;
+let maintenanceInvoicePreviewUrl = '';
+let maintenanceInvoicePreviewType = '';
+let maintenanceLastScannedText = '';
 let protectedDataLoaded = false;
 let overpassLastRequestAt = 0;
 const overpassQueryCache = new Map();
@@ -112,12 +120,23 @@ const APP_LANGUAGE_STORAGE_KEY = 'ceiboAppLanguage';
 const TRANSPARENT_TILE_DATA_URI = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
 const OWM_TILE_APPID_STORAGE_KEY = 'ceiboOwmTileAppId';
 const MAINTENANCE_BOARDS_STORAGE_KEY = 'ceiboMaintenanceBoardsV1';
+const MAINTENANCE_EXPENSES_STORAGE_KEY = 'ceiboMaintenanceExpensesV1';
+const MAINTENANCE_SUPPLIERS_STORAGE_KEY = 'ceiboMaintenanceSuppliersV1';
+const MAINTENANCE_LLM_PROVIDER_STORAGE_KEY = 'ceiboMaintenanceLlmProviderV1';
+const MAINTENANCE_LLM_MODEL_STORAGE_KEY = 'ceiboMaintenanceLlmModelV1';
+const MAINTENANCE_LLM_API_KEY_STORAGE_KEY = 'ceiboMaintenanceLlmApiKeyV1';
 const MAINTENANCE_COLOR_ORDER = ['red', 'orange', 'green', 'blue'];
+const MAINTENANCE_TASK_STATUS_ORDER = ['active', 'planned', 'done'];
 const MAINTENANCE_COLORS = {
     green: { key: 'green', hex: '#33c26f', fr: 'Vert · pas urgent', es: 'Verde · no urgente', groupFr: 'Vert · Pas urgent', groupEs: 'Verde · No urgente' },
     orange: { key: 'orange', hex: '#ff9f2f', fr: 'Orange · important', es: 'Naranja · importante', groupFr: 'Orange · Important', groupEs: 'Naranja · Importante' },
     red: { key: 'red', hex: '#ff5c5c', fr: 'Rouge · urgent', es: 'Rojo · urgente', groupFr: 'Rouge · Urgent', groupEs: 'Rojo · Urgente' },
     blue: { key: 'blue', hex: '#4ca3ff', fr: 'Bleu · information', es: 'Azul · información', groupFr: 'Bleu · Information', groupEs: 'Azul · Información' }
+};
+const MAINTENANCE_TASK_STATUSES = {
+    active: { key: 'active', fr: 'Actif', es: 'Activo' },
+    planned: { key: 'planned', fr: 'À prévoir', es: 'A prever' },
+    done: { key: 'done', fr: 'Fini', es: 'Terminado' }
 };
 const STRONG_WAVE_THRESHOLD_M = 1.8;
 const LAND_DATA_SOURCES = [
@@ -227,7 +246,7 @@ function updateLanguageButtonsUi() {
 function applyLanguageToUi() {
     document.documentElement.lang = currentLanguage;
 
-    setElementText('#appTitle', t('CEIBO Router Cloud version', 'CEIBO Router Cloud versión'));
+    setElementText('#appTitle', 'CEIBO crm');
     setElementText('#cloudTabBtn', t('Cloud', 'Nube'));
     setElementText('#routesTabBtn', t('Routes', 'Rutas'));
     setElementText('#routingTabBtn', t('Routage', 'Navegación'));
@@ -388,6 +407,9 @@ function applyLanguageToUi() {
 
     setElementText('label[for="maintenanceSchemaNameInput"]', t('Nom du schéma:', 'Nombre del esquema:'));
     setElementPlaceholder('#maintenanceSchemaNameInput', t('Ex: Compartiment moteur', 'Ej: Compartimento motor'));
+    setElementText('#maintenanceTasksSubtabBtn', t('Tâches', 'Tareas'));
+    setElementText('#maintenanceExpensesSubtabBtn', t('Dépenses & factures', 'Gastos y facturas'));
+    setElementText('#maintenanceSuppliersSubtabBtn', t('Fournisseurs', 'Proveedores'));
     setElementText('label[for="maintenanceSchemaInput"]', t('Importer schéma (image):', 'Importar esquema (imagen):'));
     setElementText('#maintenanceToggleSchemaManagerBtn', t('Gérer les schémas', 'Gestionar esquemas'));
     setElementText('#maintenanceAddSchemaBtn', t('Ajouter schéma', 'Añadir esquema'));
@@ -398,10 +420,79 @@ function applyLanguageToUi() {
     setElementText('#maintenancePinColorInput option[value="orange"]', t('Orange · important', 'Naranja · importante'));
     setElementText('#maintenancePinColorInput option[value="red"]', t('Rouge · urgent', 'Rojo · urgente'));
     setElementText('#maintenancePinColorInput option[value="blue"]', t('Bleu · information', 'Azul · información'));
+    setElementText('label[for="maintenanceTaskStatusInput"]', t('État:', 'Estado:'));
+    setElementText('#maintenanceTaskStatusInput option[value="active"]', t('Actif', 'Activo'));
+    setElementText('#maintenanceTaskStatusInput option[value="done"]', t('Fini', 'Terminado'));
+    setElementText('#maintenanceTaskStatusInput option[value="planned"]', t('À prévoir', 'A prever'));
     setElementText('label[for="maintenanceLegendInput"]', t('Légende:', 'Leyenda:'));
     setElementPlaceholder('#maintenanceLegendInput', t('Ex: Changer turbine pompe eau', 'Ej: Cambiar impulsor bomba agua'));
     setElementText('#maintenanceCanvasPlaceholder', t('Aucun schéma sélectionné', 'Ningún esquema seleccionado'));
     setElementText('#maintenanceLegendListLabel', t('Tâches par schéma:', 'Tareas por esquema:'));
+    setElementText('label[for="maintenanceInvoiceInput"]', t('Uploader facture (image/PDF):', 'Subir factura (imagen/PDF):'));
+    setElementText('#maintenanceScanInvoiceBtn', t('Scanner facture', 'Escanear factura'));
+    setElementText('#maintenanceInvoiceScanStatus', t('Scan facture: en attente', 'Escaneo factura: en espera'));
+    setElementText('#maintenanceSupplierSuggestionsLabel', t('Suggestions fournisseur:', 'Sugerencias proveedor:'));
+    setElementText('#maintenanceInvoiceReviewTitle', t('Copie rapide depuis l\'aperçu PDF', 'Copia rápida desde la vista previa PDF'));
+    setElementText('#maintenanceInvoiceReviewHint', t('1) Sélectionne du texte dans l’aperçu à droite 2) copie (⌘C) 3) colle dans le champ choisi.', '1) Selecciona texto en la vista previa derecha 2) copia (⌘C) 3) pega en el campo elegido.'));
+    setElementText('label[for="maintenanceManualPasteTargetSelect"]', t('Champ de destination:', 'Campo de destino:'));
+    setElementText('#maintenancePasteSelectedTextBtn', t('Coller texte copié dans ce champ', 'Pegar texto copiado en este campo'));
+    setElementText('#maintenanceAltLlmTitle', t('Analyse IA alternative', 'Análisis IA alternativo'));
+    setElementText('label[for="maintenanceLlmProviderSelect"]', t('Provider:', 'Proveedor:'));
+    setElementText('#maintenanceLlmProviderSelect option[value=""]', t('Désactivé', 'Desactivado'));
+    setElementText('label[for="maintenanceLlmApiKeyInput"]', t('API key:', 'Clave API:'));
+    setElementText('label[for="maintenanceLlmModelInput"]', t('Model:', 'Modelo:'));
+    setElementPlaceholder('#maintenanceLlmModelInput', t('gpt-4o-mini / claude-3-5-haiku-latest', 'gpt-4o-mini / claude-3-5-haiku-latest'));
+    setElementText('#maintenanceTestAltLlmBtn', t('Tester connexion API', 'Probar conexión API'));
+    setElementText('#maintenanceRunAltLlmBtn', t('Analyser avec IA', 'Analizar con IA'));
+    setElementText('#maintenanceInvoicePreviewTitle', t('Aperçu facture', 'Vista previa factura'));
+    setElementText('#maintenanceInvoicePreviewPlaceholder', t('Charge une facture pour afficher l’aperçu', 'Carga una factura para mostrar la vista previa'));
+    const manualPasteTargetSelect = document.getElementById('maintenanceManualPasteTargetSelect');
+    if (manualPasteTargetSelect) {
+        const previousValue = manualPasteTargetSelect.value;
+        manualPasteTargetSelect.innerHTML = '';
+        const options = [
+            { value: 'expenseSupplier', label: t('Fournisseur (dépense)', 'Proveedor (gasto)') },
+            { value: 'supplierContact', label: t('Contact fournisseur (nom)', 'Contacto proveedor (nombre)') },
+            { value: 'supplierPhone', label: t('Téléphone contact', 'Teléfono contacto') },
+            { value: 'supplierEmailToNote', label: t('Email contact (note fournisseur)', 'Email contacto (nota proveedor)') },
+            { value: 'expenseIban', label: t('IBAN fournisseur', 'IBAN proveedor') },
+            { value: 'expenseAmount', label: t('Montant total', 'Importe total') },
+            { value: 'expenseAiComment', label: t('Commentaire IA', 'Comentario IA') },
+            { value: 'expenseNote', label: t('Note dépense', 'Nota gasto') }
+        ];
+        options.forEach(item => {
+            const option = document.createElement('option');
+            option.value = item.value;
+            option.textContent = item.label;
+            manualPasteTargetSelect.appendChild(option);
+        });
+        if (options.some(item => item.value === previousValue)) {
+            manualPasteTargetSelect.value = previousValue;
+        }
+    }
+    setElementText('label[for="maintenanceExpenseDateInput"]', t('Date:', 'Fecha:'));
+    setElementText('label[for="maintenanceExpenseTotalInput"]', t('Montant total:', 'Importe total:'));
+    setElementText('label[for="maintenanceExpenseCurrencyInput"]', t('Devise:', 'Moneda:'));
+    setElementText('label[for="maintenanceExpensePayerSelect"]', t('Qui paye:', 'Quién paga:'));
+    setElementText('label[for="maintenanceExpensePaymentStatusSelect"]', t('État paiement:', 'Estado pago:'));
+    setElementText('#maintenanceExpensePaymentStatusSelect option[value="pending"]', t('À payer', 'Pendiente'));
+    setElementText('#maintenanceExpensePaymentStatusSelect option[value="partial"]', t('Partiel', 'Parcial'));
+    setElementText('#maintenanceExpensePaymentStatusSelect option[value="paid"]', t('Payé', 'Pagado'));
+    setElementText('label[for="maintenanceExpenseSupplierInput"]', t('Fournisseur:', 'Proveedor:'));
+    setElementText('label[for="maintenanceExpenseSupplierIbanInput"]', t('IBAN fournisseur:', 'IBAN proveedor:'));
+    setElementText('label[for="maintenanceExpenseLinesInput"]', t('Lignes de travaux/produits (une ligne = libellé ; quantité ; prix ; total):', 'Líneas de trabajos/productos (una línea = concepto ; cantidad ; precio ; total):'));
+    setElementText('label[for="maintenanceExpenseNoteInput"]', t('Note:', 'Nota:'));
+    setElementText('label[for="maintenanceExpenseAiCommentInput"]', t('Commentaire IA:', 'Comentario IA:'));
+    setElementPlaceholder('#maintenanceExpenseAiCommentInput', t('Analyse automatique du scan', 'Análisis automático del escaneo'));
+    setElementText('#maintenanceAddExpenseBtn', t('Ajouter dépense', 'Añadir gasto'));
+    setElementText('#maintenanceExpensesListLabel', t('Dépenses:', 'Gastos:'));
+    setElementText('label[for="maintenanceSupplierNameInput"]', t('Nom fournisseur:', 'Nombre proveedor:'));
+    setElementText('label[for="maintenanceSupplierContactInput"]', t('Contact:', 'Contacto:'));
+    setElementText('label[for="maintenanceSupplierPhoneInput"]', t('Téléphone urgence:', 'Teléfono urgencia:'));
+    setElementText('label[for="maintenanceSupplierIbanInput"]', t('IBAN:', 'IBAN:'));
+    setElementText('label[for="maintenanceSupplierNoteInput"]', t('Note:', 'Nota:'));
+    setElementText('#maintenanceAddSupplierBtn', t('Ajouter fournisseur', 'Añadir proveedor'));
+    setElementText('#maintenanceSuppliersListLabel', t('Fournisseurs:', 'Proveedores:'));
 
     const creator = document.querySelector('.creator-credit');
     if (creator) creator.textContent = t('Programme créé par Max Patissier', 'Programa creado por Max Patissier');
@@ -415,6 +506,8 @@ function applyLanguageToUi() {
     updateSelectedWaypointInfo();
     updateMaintenanceSchemaManagerToggleText();
     renderMaintenanceBoard();
+    renderMaintenanceExpenses();
+    renderMaintenanceSuppliers();
     updateMeasureInfo();
     setMeasureMode(measureModeEnabled);
     refreshBaseLayerControlLanguage();
@@ -507,6 +600,8 @@ function clearProtectedUiData() {
     refreshSavedList();
     setWaypointPhotoEntries([], { persistLocal: false, refreshUi: true });
     setMaintenanceBoards([], { persistLocal: false, refreshUi: true, syncCloud: false });
+    setMaintenanceExpenses([], { persistLocal: false, refreshUi: true, syncCloud: false });
+    setMaintenanceSuppliers([], { persistLocal: false, refreshUi: true, syncCloud: false });
     navLogEntries = [];
     renderNavLogList();
     engineLogEntries = [];
@@ -540,6 +635,8 @@ async function applyAuthGateState({ clearWhenLocked = true } = {}) {
             refreshSavedList();
             setWaypointPhotoEntries([], { persistLocal: false, refreshUi: true });
             setMaintenanceBoards([], { persistLocal: false, refreshUi: true, syncCloud: false });
+            setMaintenanceExpenses([], { persistLocal: false, refreshUi: true, syncCloud: false });
+            setMaintenanceSuppliers([], { persistLocal: false, refreshUi: true, syncCloud: false });
             navLogEntries = [];
             renderNavLogList();
             engineLogEntries = [];
@@ -550,7 +647,11 @@ async function applyAuthGateState({ clearWhenLocked = true } = {}) {
             renderWaypointPhotoList();
             syncWaypointPhotoMarkersInView();
             loadMaintenanceBoards();
+            loadMaintenanceExpenses();
+            loadMaintenanceSuppliers();
             renderMaintenanceBoard();
+            renderMaintenanceExpenses();
+            renderMaintenanceSuppliers();
             loadNavigationLogbook();
             loadEngineLogbook();
             setSavedRoutes(loadRoutesFromLocalStorage());
@@ -576,7 +677,11 @@ async function applyAuthGateState({ clearWhenLocked = true } = {}) {
                 renderWaypointPhotoList();
                 syncWaypointPhotoMarkersInView();
                 loadMaintenanceBoards();
+                loadMaintenanceExpenses();
+                loadMaintenanceSuppliers();
                 renderMaintenanceBoard();
+                renderMaintenanceExpenses();
+                renderMaintenanceSuppliers();
                 setCloudStatus(`Cloud indisponible, affichage cache local (${localRoutes.length} route(s))`, true);
                 updateCloudDataSourceStatus('cache local (fallback)', localRoutes.length, waypointPhotoEntries.length);
             } else {
@@ -3635,6 +3740,1001 @@ function setMaintenanceSchemaManagerVisibility(visible) {
     updateMaintenanceSchemaManagerToggleText();
 }
 
+function normalizeMaintenanceTaskStatus(value) {
+    const key = String(value || '').trim().toLowerCase();
+    return MAINTENANCE_TASK_STATUSES[key] ? key : 'active';
+}
+
+function getMaintenanceTaskStatusMeta(value) {
+    return MAINTENANCE_TASK_STATUSES[normalizeMaintenanceTaskStatus(value)] || MAINTENANCE_TASK_STATUSES.active;
+}
+
+function toFiniteAmount(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return 0;
+    return Math.max(0, Math.round(num * 100) / 100);
+}
+
+function parseExpenseLinesText(raw) {
+    const text = String(raw || '');
+    return text
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(Boolean)
+        .map((line, index) => {
+            const parts = line.split(';').map(part => part.trim());
+            return {
+                id: `expense-line-${Date.now()}-${index}`,
+                label: String(parts[0] || line),
+                quantity: parts[1] ? toFiniteAmount(parts[1].replace(',', '.')) : null,
+                unitPrice: parts[2] ? toFiniteAmount(parts[2].replace(',', '.')) : null,
+                total: parts[3] ? toFiniteAmount(parts[3].replace(',', '.')) : null
+            };
+        });
+}
+
+function sanitizeMaintenanceExpense(entry, fallbackIndex = 0) {
+    const rawLines = Array.isArray(entry?.lines) ? entry.lines : [];
+    const lines = rawLines
+        .map((line, lineIndex) => ({
+            id: String(line?.id || `expense-line-${Date.now()}-${lineIndex}`),
+            label: String(line?.label || '').trim(),
+            quantity: line?.quantity == null ? null : toFiniteAmount(line.quantity),
+            unitPrice: line?.unitPrice == null ? null : toFiniteAmount(line.unitPrice),
+            total: line?.total == null ? null : toFiniteAmount(line.total)
+        }))
+        .filter(line => line.label);
+
+    return {
+        id: String(entry?.id || `expense-${Date.now()}-${fallbackIndex}`),
+        invoiceName: String(entry?.invoiceName || '').trim(),
+        date: String(entry?.date || new Date().toISOString().slice(0, 10)),
+        supplierName: String(entry?.supplierName || '').trim(),
+        supplierIban: String(entry?.supplierIban || '').trim(),
+        payer: String(entry?.payer || 'PATISSIER').toUpperCase() === 'KLENIK' ? 'KLENIK' : 'PATISSIER',
+        paymentStatus: ['pending', 'partial', 'paid'].includes(String(entry?.paymentStatus || 'pending')) ? String(entry?.paymentStatus) : 'pending',
+        totalAmount: toFiniteAmount(entry?.totalAmount),
+        currency: String(entry?.currency || 'EUR').trim().toUpperCase() || 'EUR',
+        lines,
+        note: String(entry?.note || '').trim(),
+        aiComment: String(entry?.aiComment || '').trim(),
+        scannedText: String(entry?.scannedText || ''),
+        createdAt: String(entry?.createdAt || new Date().toISOString()),
+        updatedAt: String(entry?.updatedAt || new Date().toISOString())
+    };
+}
+
+function sanitizeMaintenanceSupplier(entry, fallbackIndex = 0) {
+    return {
+        id: String(entry?.id || `supplier-${Date.now()}-${fallbackIndex}`),
+        name: String(entry?.name || '').trim(),
+        contact: String(entry?.contact || '').trim(),
+        emergencyPhone: String(entry?.emergencyPhone || '').trim(),
+        iban: String(entry?.iban || '').trim(),
+        note: String(entry?.note || '').trim(),
+        createdAt: String(entry?.createdAt || new Date().toISOString()),
+        updatedAt: String(entry?.updatedAt || new Date().toISOString())
+    };
+}
+
+function loadMaintenanceExpenses() {
+    setMaintenanceExpenses(loadArrayFromStorage(MAINTENANCE_EXPENSES_STORAGE_KEY), { persistLocal: false, refreshUi: false, syncCloud: false });
+}
+
+function setMaintenanceExpenses(list, { persistLocal = true, refreshUi = true, syncCloud = false } = {}) {
+    maintenanceExpenses = (Array.isArray(list) ? list : [])
+        .map((entry, index) => sanitizeMaintenanceExpense(entry, index))
+        .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+
+    if (persistLocal) {
+        saveArrayToStorage(MAINTENANCE_EXPENSES_STORAGE_KEY, maintenanceExpenses);
+    }
+    if (syncCloud && isCloudReady()) {
+        pushRoutesToCloud().catch(() => null);
+    }
+    if (refreshUi) {
+        renderMaintenanceExpenses();
+    }
+}
+
+function persistMaintenanceExpenses({ syncCloud = true } = {}) {
+    saveArrayToStorage(MAINTENANCE_EXPENSES_STORAGE_KEY, maintenanceExpenses);
+    if (syncCloud && isCloudReady()) {
+        pushRoutesToCloud().catch(() => null);
+    }
+}
+
+function loadMaintenanceSuppliers() {
+    setMaintenanceSuppliers(loadArrayFromStorage(MAINTENANCE_SUPPLIERS_STORAGE_KEY), { persistLocal: false, refreshUi: false, syncCloud: false });
+}
+
+function setMaintenanceSuppliers(list, { persistLocal = true, refreshUi = true, syncCloud = false } = {}) {
+    maintenanceSuppliers = (Array.isArray(list) ? list : [])
+        .map((entry, index) => sanitizeMaintenanceSupplier(entry, index))
+        .filter(entry => entry.name)
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+    if (persistLocal) {
+        saveArrayToStorage(MAINTENANCE_SUPPLIERS_STORAGE_KEY, maintenanceSuppliers);
+    }
+    if (syncCloud && isCloudReady()) {
+        pushRoutesToCloud().catch(() => null);
+    }
+    if (refreshUi) {
+        renderMaintenanceSuppliers();
+    }
+}
+
+function persistMaintenanceSuppliers({ syncCloud = true } = {}) {
+    saveArrayToStorage(MAINTENANCE_SUPPLIERS_STORAGE_KEY, maintenanceSuppliers);
+    if (syncCloud && isCloudReady()) {
+        pushRoutesToCloud().catch(() => null);
+    }
+}
+
+function renderMaintenanceExpenses() {
+    const container = document.getElementById('maintenanceExpensesList');
+    if (!container) return;
+
+    if (!maintenanceExpenses.length) {
+        container.innerHTML = `<div class="maintenance-legend-empty">${t('Aucune dépense enregistrée.', 'No hay gastos registrados.')}</div>`;
+        return;
+    }
+
+    container.innerHTML = '';
+    maintenanceExpenses.forEach((expense, index) => {
+        const card = document.createElement('div');
+        card.className = 'maintenance-expense-card';
+
+        const paymentLabelMap = {
+            pending: t('À payer', 'Pendiente'),
+            partial: t('Partiel', 'Parcial'),
+            paid: t('Payé', 'Pagado')
+        };
+
+        const linesText = expense.lines.map(line => {
+            const details = [line.label];
+            if (line.quantity != null) details.push(`x${line.quantity}`);
+            if (line.unitPrice != null) details.push(`${line.unitPrice.toFixed(2)}`);
+            if (line.total != null) details.push(`= ${line.total.toFixed(2)}`);
+            return `<div class="maintenance-expense-line">• ${escapeHtml(details.join(' '))}</div>`;
+        }).join('');
+        const aiCommentHtml = escapeHtml(expense.aiComment || '').replace(/\n/g, '<br>');
+
+        card.innerHTML =
+            `<strong>#${index + 1} · ${escapeHtml(expense.supplierName || t('Fournisseur non renseigné', 'Proveedor no indicado'))}</strong><br>` +
+            `${escapeHtml(expense.date)} · ${expense.totalAmount.toFixed(2)} ${escapeHtml(expense.currency)}<br>` +
+            `${t('Payeur', 'Pagador')}: ${escapeHtml(expense.payer)} · ${t('Paiement', 'Pago')}: ${escapeHtml(paymentLabelMap[expense.paymentStatus] || expense.paymentStatus)}<br>` +
+            `${t('IBAN', 'IBAN')}: ${escapeHtml(expense.supplierIban || '—')}` +
+            (expense.invoiceName ? `<br>${t('Facture', 'Factura')}: ${escapeHtml(expense.invoiceName)}` : '') +
+            (expense.note ? `<br>${t('Note', 'Nota')}: ${escapeHtml(expense.note)}` : '') +
+            (expense.aiComment ? `<br><strong>${t('Commentaire IA', 'Comentario IA')}</strong>:<br>${aiCommentHtml}` : '') +
+            (linesText ? `<div style="margin-top:6px;"><strong>${t('Lignes', 'Líneas')}:</strong>${linesText}</div>` : '');
+
+        const actions = document.createElement('div');
+        actions.className = 'maintenance-card-actions';
+        const deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button';
+        deleteBtn.className = 'maintenance-delete-btn';
+        deleteBtn.textContent = t('Supprimer', 'Eliminar');
+        deleteBtn.addEventListener('click', () => {
+            maintenanceExpenses = maintenanceExpenses.filter(item => item.id !== expense.id);
+            persistMaintenanceExpenses();
+            renderMaintenanceExpenses();
+        });
+        actions.appendChild(deleteBtn);
+        card.appendChild(actions);
+
+        container.appendChild(card);
+    });
+}
+
+function renderMaintenanceSuppliers() {
+    const container = document.getElementById('maintenanceSuppliersList');
+    if (!container) return;
+
+    if (!maintenanceSuppliers.length) {
+        container.innerHTML = `<div class="maintenance-legend-empty">${t('Aucun fournisseur enregistré.', 'Ningún proveedor registrado.')}</div>`;
+        return;
+    }
+
+    container.innerHTML = '';
+    maintenanceSuppliers.forEach((supplier, index) => {
+        const card = document.createElement('div');
+        card.className = 'maintenance-supplier-card';
+        card.innerHTML =
+            `<strong>#${index + 1} · ${escapeHtml(supplier.name)}</strong><br>` +
+            `${t('Contact', 'Contacto')}: ${escapeHtml(supplier.contact || '—')}<br>` +
+            `${t('Urgence', 'Urgencia')}: ${escapeHtml(supplier.emergencyPhone || '—')}<br>` +
+            `${t('IBAN', 'IBAN')}: ${escapeHtml(supplier.iban || '—')}` +
+            (supplier.note ? `<br>${t('Note', 'Nota')}: ${escapeHtml(supplier.note)}` : '');
+
+        const actions = document.createElement('div');
+        actions.className = 'maintenance-card-actions';
+        const deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button';
+        deleteBtn.className = 'maintenance-delete-btn';
+        deleteBtn.textContent = t('Supprimer', 'Eliminar');
+        deleteBtn.addEventListener('click', () => {
+            maintenanceSuppliers = maintenanceSuppliers.filter(item => item.id !== supplier.id);
+            persistMaintenanceSuppliers();
+            renderMaintenanceSuppliers();
+        });
+        actions.appendChild(deleteBtn);
+        card.appendChild(actions);
+
+        container.appendChild(card);
+    });
+}
+
+function extractIbanFromText(text) {
+    const raw = String(text || '').toUpperCase();
+    const lines = raw.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+
+    const isValidIban = (iban) => {
+        const compact = String(iban || '').replace(/\s+/g, '').toUpperCase();
+        if (!/^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(compact)) return false;
+        const reordered = `${compact.slice(4)}${compact.slice(0, 4)}`;
+        let transformed = '';
+        for (const char of reordered) {
+            if (/[A-Z]/.test(char)) {
+                transformed += String(char.charCodeAt(0) - 55);
+            } else {
+                transformed += char;
+            }
+        }
+
+        let remainder = 0;
+        for (const digit of transformed) {
+            remainder = (remainder * 10 + Number(digit)) % 97;
+        }
+        return remainder === 1;
+    };
+
+    const extractCandidate = (value) => {
+        const compact = String(value || '').replace(/[^A-Z0-9]/g, '');
+        if (!/^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(compact)) return '';
+        if (compact.length < 15 || compact.length > 34) return '';
+        if (!isValidIban(compact)) return '';
+        return compact;
+    };
+
+    const ibanLine = lines.find(line => line.includes('IBAN'));
+    if (ibanLine) {
+        const afterLabel = ibanLine.split('IBAN').slice(1).join(' ').replace(/[:\s]+/, ' ').trim();
+        const tokenized = afterLabel.match(/[A-Z0-9\s-]{15,45}/g) || [];
+        for (const token of tokenized) {
+            const iban = extractCandidate(token);
+            if (iban) return iban;
+        }
+    }
+
+    const globalTokens = raw.match(/[A-Z]{2}[\s-]*\d{2}(?:[\s-]*[A-Z0-9]){11,34}/g) || [];
+    for (const token of globalTokens) {
+        const iban = extractCandidate(token);
+        if (iban) return iban;
+    }
+
+    return '';
+}
+
+function extractTotalFromText(text) {
+    const rawText = String(text || '');
+    const lines = rawText.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    const amountPattern = /(?:\d{1,3}(?:[\s.,]\d{3})+|\d+)(?:[.,]\d{2})/g;
+
+    const parseMoney = (token) => {
+        const value = String(token || '').replace(/\s/g, '');
+        if (!value) return null;
+
+        const lastComma = value.lastIndexOf(',');
+        const lastDot = value.lastIndexOf('.');
+        let normalized = value;
+
+        if (lastComma !== -1 && lastDot !== -1) {
+            if (lastComma > lastDot) {
+                normalized = value.replace(/\./g, '').replace(',', '.');
+            } else {
+                normalized = value.replace(/,/g, '');
+            }
+        } else if (lastComma !== -1) {
+            normalized = /,\d{2}$/.test(value) ? value.replace(/\./g, '').replace(',', '.') : value.replace(/,/g, '');
+        } else {
+            normalized = /\.\d{2}$/.test(value) ? value.replace(/,/g, '') : value.replace(/\./g, '');
+        }
+
+        const num = Number(normalized);
+        if (!Number.isFinite(num) || num <= 0 || num > 100000000) return null;
+        return num;
+    };
+
+    const collectLineAmounts = (line) => {
+        const tokens = String(line || '').match(amountPattern) || [];
+        return tokens.map(parseMoney).filter(value => Number.isFinite(value));
+    };
+
+    const prioritizedPatterns = [
+        /\b(total\s*ttc|montant\s*total\s*ttc|grand\s*total|amount\s*due|importe\s*total|a\s*payer|à\s*payer)\b/i,
+        /\b(total|montant\s*total|importe\s*total)\b/i
+    ];
+
+    for (const pattern of prioritizedPatterns) {
+        const line = lines.find(current => pattern.test(current));
+        if (!line) continue;
+        const amounts = collectLineAmounts(line);
+        if (amounts.length) return Math.max(...amounts);
+    }
+
+    const allAmounts = lines.flatMap(collectLineAmounts);
+    if (!allAmounts.length) return null;
+    return Math.max(...allAmounts);
+}
+
+function normalizeSupplierText(value) {
+    return String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function cleanSupplierCandidateName(value) {
+    return String(value || '')
+        .replace(/^(fournisseur|supplier|vendor|vendeur|prestataire|societe|société|from)\s*[:\-]?\s*/i, '')
+        .replace(/\b(iban|bic|swift|facture|invoice|tva|vat|siret|nif|cif|email|tel|phone)\b.*$/i, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function looksLikeAdministrativeLine(value) {
+    const line = String(value || '').trim();
+    if (!line) return true;
+    if (/@|https?:\/\//i.test(line)) return true;
+    if (/\b(iban|bic|swift|facture|invoice|total|montant|amount|date|tva|vat|siret|nif|cif|adresse|address|tel|phone|email|qty|quantite|cantidad)\b/i.test(line)) return true;
+    if (/\d{5,}/.test(line)) return true;
+    return false;
+}
+
+function normalizeIbanValue(value) {
+    return String(value || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+}
+
+function findMaintenanceSupplierByName(name) {
+    const normalized = normalizeSupplierText(name);
+    if (!normalized) return null;
+    return maintenanceSuppliers.find(item => normalizeSupplierText(item?.name || '') === normalized) || null;
+}
+
+function getSupplierCandidatesFromText(text, fileName = '') {
+    const candidates = [];
+    const seen = new Set();
+    const pushCandidate = ({ name = '', confidence = 'low', source = 'heuristic', score = 0 } = {}) => {
+        const cleanName = cleanSupplierCandidateName(name);
+        const normalized = normalizeSupplierText(cleanName);
+        if (!normalized || normalized.length < 3) return;
+        if (seen.has(normalized)) return;
+        seen.add(normalized);
+        candidates.push({ name: cleanName, confidence, source, score });
+    };
+
+    const rawLines = String(text || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    const lines = rawLines.length <= 2
+        ? String(text || '').split(/\s{2,}|\t+/).map(line => line.trim()).filter(Boolean)
+        : rawLines;
+    const firstLines = lines.slice(0, 14);
+
+    const normalizedFullText = normalizeSupplierText(text);
+    maintenanceSuppliers.forEach(item => {
+        const supplierName = String(item?.name || '').trim();
+        const normalizedName = normalizeSupplierText(supplierName);
+        if (!normalizedName || normalizedName.length < 4) return;
+        if (normalizedFullText.includes(normalizedName)) {
+            pushCandidate({ name: supplierName, confidence: 'high', source: 'directory', score: 2.5 + Math.min(0.4, normalizedName.length / 100) });
+        }
+    });
+
+    const labeledLine = firstLines.find(line => /(fournisseur|supplier|vendor|vendeur|prestataire|societe|société|from)\s*[:\-]/i.test(line));
+    if (labeledLine) {
+        const right = cleanSupplierCandidateName(labeledLine.split(/[:\-]/).slice(1).join(' '));
+        if (right && right.length >= 4 && !looksLikeAdministrativeLine(right)) {
+            pushCandidate({ name: right, confidence: 'high', source: 'label', score: 2.2 });
+        }
+    }
+
+    const candidatePool = firstLines
+        .map(cleanSupplierCandidateName)
+        .filter(line =>
+            line.length >= 4 &&
+            line.length <= 64 &&
+            /[a-zA-ZÀ-ÿ]/.test(line) &&
+            !looksLikeAdministrativeLine(line) &&
+            (line.match(/\d/g) || []).length <= 3
+        );
+
+    const legalEntityPattern = /(SARL|SAS|SL|SA|S\.A\.|S\.L\.|GMBH|LTD|SRL|SNC|EURL|BV|LLC|INC)\b/i;
+    candidatePool
+        .map((line, index) => {
+            const letters = (line.match(/[A-Za-zÀ-ÿ]/g) || []).length;
+            const uppercase = (line.match(/[A-ZÀ-Ý]/g) || []).length;
+            const upperRatio = letters ? uppercase / letters : 0;
+            const suffixBonus = legalEntityPattern.test(line) ? 0.7 : 0;
+            const earlyLineBonus = Math.max(0, 0.35 - index * 0.05);
+            const titleCaseBonus = /^[A-ZÀ-Ý][A-Za-zÀ-ÿ\s.'&-]+$/.test(line) ? 0.2 : 0;
+            const digitPenalty = (line.match(/\d/g) || []).length * 0.25;
+            const score = upperRatio + suffixBonus + earlyLineBonus + titleCaseBonus - digitPenalty;
+            return { line, score };
+        })
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 6)
+        .forEach(item => {
+            const confidence = item.score >= 1.15 ? 'high' : item.score >= 0.8 ? 'medium' : item.score >= 0.55 ? 'low' : 'none';
+            if (confidence === 'none') return;
+            pushCandidate({ name: item.line, confidence, source: 'heuristic', score: item.score });
+        });
+
+    const fallback = guessSupplierFromFilename(fileName);
+    if (fallback) {
+        pushCandidate({ name: fallback, confidence: 'low', source: 'filename', score: 0.45 });
+    }
+
+    return candidates
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 3);
+}
+
+function guessSupplierFromText(text, fileName = '') {
+    const candidates = getSupplierCandidatesFromText(text, fileName);
+    if (!candidates.length) return { name: '', confidence: 'none', source: 'none' };
+    return {
+        name: candidates[0].name,
+        confidence: candidates[0].confidence,
+        source: candidates[0].source
+    };
+}
+
+function guessSupplierFromFilename(fileName) {
+    const base = String(fileName || '')
+        .replace(/\.[^.]+$/, '')
+        .replace(/[_-]+/g, ' ')
+        .replace(/\b(scan|scanner|facture|invoice|pdf|image|photo|document|doc)\b/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    if (!base || base.length < 3) return '';
+    return base;
+}
+
+function extractDateFromText(text) {
+    const raw = String(text || '');
+
+    const normalizeDate = (year, month, day) => {
+        const y = Number(year);
+        const m = Number(month);
+        const d = Number(day);
+        if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return '';
+        if (y < 2000 || y > 2100 || m < 1 || m > 12 || d < 1 || d > 31) return '';
+        return `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    };
+
+    const ymd = raw.match(/\b(20\d{2})[\/.\-](\d{1,2})[\/.\-](\d{1,2})\b/);
+    if (ymd) {
+        const normalized = normalizeDate(ymd[1], ymd[2], ymd[3]);
+        if (normalized) return normalized;
+    }
+
+    const dmy = raw.match(/\b(\d{1,2})[\/.\-](\d{1,2})[\/.\-](20\d{2}|\d{2})\b/);
+    if (dmy) {
+        const year = dmy[3].length === 2 ? `20${dmy[3]}` : dmy[3];
+        const normalized = normalizeDate(year, dmy[2], dmy[1]);
+        if (normalized) return normalized;
+    }
+
+    return '';
+}
+
+function extractInvoiceFields(text, fileName = '') {
+    const supplierGuess = guessSupplierFromText(text, fileName);
+    return {
+        supplierName: supplierGuess.name,
+        supplierConfidence: supplierGuess.confidence,
+        supplierSource: supplierGuess.source,
+        date: extractDateFromText(text),
+        totalAmount: extractTotalFromText(text),
+        iban: extractIbanFromText(text)
+    };
+}
+
+function buildExpensePreventionComment({ supplierName = '', totalAmount = null, detectedLines = [] } = {}) {
+    const cleanedLines = (Array.isArray(detectedLines) ? detectedLines : [])
+        .map(line => String(line || '').trim())
+        .filter(Boolean)
+        .slice(0, 12);
+    const joined = cleanedLines.join(' ').toLowerCase();
+
+    const themes = [
+        {
+            key: 'water',
+            regex: /(pompe|pump|impeller|turbine|water pump|eau de mer|waterline|cooling)/i,
+            risk: t('Risque refroidissement moteur: panne turbine/pompe ou débit eau insuffisant.', 'Riesgo de refrigeración motor: fallo turbina/bomba o caudal insuficiente.'),
+            controls: t('Contrôler aspiration eau de mer, filtre, turbine et température moteur après intervention.', 'Controlar aspiración de agua de mar, filtro, turbina y temperatura motor tras la intervención.'),
+            prevention: t('Programmer contrôle visuel toutes les 50h et remplacement préventif turbine selon manuel.', 'Programar control visual cada 50h y sustitución preventiva de turbina según manual.')
+        },
+        {
+            key: 'engine',
+            regex: /(filtre|filter|huile|oil|fuel|injecteur|injector|courroie|belt)/i,
+            risk: t('Risque performance moteur: encrassement ou usure prématurée.', 'Riesgo de rendimiento motor: ensuciamiento o desgaste prematuro.'),
+            controls: t('Vérifier heures moteur, référence pièces montées et conformité viscosité/grade.', 'Verificar horas motor, referencia de piezas montadas y conformidad de viscosidad/grado.'),
+            prevention: t('Créer un plan périodique filtres/huile avec seuils heures moteur et stock mini à bord.', 'Crear un plan periódico de filtros/aceite con umbrales de horas y stock mínimo a bordo.')
+        },
+        {
+            key: 'electric',
+            regex: /(batterie|battery|alternateur|alternator|chargeur|charger|cable|câble|fusible|relay|relais)/i,
+            risk: t('Risque électrique: perte de charge, coupure ou panne intermittente.', 'Riesgo eléctrico: pérdida de carga, corte o fallo intermitente.'),
+            controls: t('Mesurer tension repos/charge, serrage bornes et chute de tension sous charge.', 'Medir tensión en reposo/carga, apriete de bornes y caída de tensión bajo carga.'),
+            prevention: t('Planifier test de capacité batterie et inspection connexions anticorrosion.', 'Planificar test de capacidad de batería e inspección de conexiones anticorrosión.')
+        },
+        {
+            key: 'seal',
+            regex: /(joint|seal|gasket|durite|hose|collier|etancheite|étanchéité|fuite|leak)/i,
+            risk: t('Risque fuite: perte de fluide et avarie secondaire.', 'Riesgo de fuga: pérdida de fluido y avería secundaria.'),
+            controls: t('Recontrôler l’étanchéité à chaud et à froid 24h après remise en service.', 'Revisar estanqueidad en caliente y en frío 24h después de la puesta en servicio.'),
+            prevention: t('Ajouter contrôle anti-fuite en ronde et remplacer consommables d’étanchéité par lot.', 'Añadir control antifugas en ronda y sustituir consumibles de estanqueidad por lote.')
+        }
+    ];
+
+    const matchedThemes = themes.filter(theme => theme.regex.test(joined));
+    const keyLines = cleanedLines
+        .filter(line => !/\b(total|ttc|ht|tv[ao]|amount|importe|montant|iban)\b/i.test(line))
+        .slice(0, 4);
+
+    const risks = [];
+    const controls = [];
+    const prevention = [];
+
+    if (Number.isFinite(totalAmount) && totalAmount >= 1000) {
+        risks.push(t('Montant élevé: impact budget significatif et risque de validation incomplète.', 'Importe elevado: impacto presupuestario significativo y riesgo de validación incompleta.'));
+        controls.push(t('Exiger devis comparatif, preuve d’exécution et validation croisée avant paiement.', 'Exigir presupuesto comparativo, prueba de ejecución y validación cruzada antes del pago.'));
+    }
+    if (Number.isFinite(totalAmount) && totalAmount >= 3000) {
+        prevention.push(t('Mettre en place un seuil d’alerte > 3000 avec approbation à deux niveaux.', 'Configurar umbral de alerta > 3000 con aprobación en dos niveles.'));
+    }
+
+    matchedThemes.forEach(theme => {
+        risks.push(theme.risk);
+        controls.push(theme.controls);
+        prevention.push(theme.prevention);
+    });
+
+    if (!risks.length) {
+        risks.push(t('Risque principal non catégorisé: possible écart entre prestation facturée et besoin réel.', 'Riesgo principal no categorizado: posible desvío entre servicio facturado y necesidad real.'));
+    }
+    if (!controls.length) {
+        controls.push(t('Contrôler cohérence facture/pièces remplacées/main d’œuvre avant clôture.', 'Controlar coherencia factura/piezas sustituidas/mano de obra antes del cierre.'));
+    }
+    if (!prevention.length) {
+        prevention.push(t('Documenter cause racine, action corrective et date du prochain contrôle.', 'Documentar causa raíz, acción correctiva y fecha del próximo control.'));
+    }
+
+    const docs = [
+        t('Archiver facture + photos avant/après + référence des pièces.', 'Archivar factura + fotos antes/después + referencia de piezas.'),
+        t('Noter heures moteur et test de validation après intervention.', 'Anotar horas motor y prueba de validación tras la intervención.')
+    ];
+
+    const header = t('Commentaire IA · Analyse facture', 'Comentario IA · Análisis de factura');
+    const supplierLine = supplierName ? `${t('Fournisseur', 'Proveedor')}: ${supplierName}` : t('Fournisseur: non confirmé', 'Proveedor: no confirmado');
+    const amountLine = Number.isFinite(totalAmount) && totalAmount > 0 ? `${t('Montant détecté', 'Importe detectado')}: ${totalAmount.toFixed(2)}` : t('Montant détecté: non trouvé', 'Importe detectado: no encontrado');
+    const keyLinesBlock = keyLines.length
+        ? keyLines.map(line => `- ${line}`).join('\n')
+        : `- ${t('Aucune ligne exploitable détectée dans le scan.', 'No se detectaron líneas aprovechables en el escaneo.')}`;
+
+    return [
+        header,
+        `${supplierLine} · ${amountLine}`,
+        '',
+        t('Éléments détectés', 'Elementos detectados'),
+        keyLinesBlock,
+        '',
+        t('Risques probables', 'Riesgos probables'),
+        risks.map(item => `- ${item}`).join('\n'),
+        '',
+        t('Contrôles à faire avant paiement', 'Controles antes del pago'),
+        controls.map(item => `- ${item}`).join('\n'),
+        '',
+        t('Prévention (30-90 jours)', 'Prevención (30-90 días)'),
+        prevention.map(item => `- ${item}`).join('\n'),
+        '',
+        t('Pièces à archiver', 'Documentos a archivar'),
+        docs.map(item => `- ${item}`).join('\n')
+    ].join('\n');
+}
+
+async function loadMaintenancePdfJs() {
+    if (!maintenancePdfJsLoader) {
+        maintenancePdfJsLoader = import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.7.76/build/pdf.min.mjs');
+    }
+    const pdfjsLib = await maintenancePdfJsLoader;
+    if (pdfjsLib?.GlobalWorkerOptions) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.7.76/build/pdf.worker.min.mjs';
+    }
+    return pdfjsLib;
+}
+
+async function renderSelectablePdfPreview(file, container) {
+    if (!file || !container || !String(file.type || '').includes('pdf')) return;
+
+    const pdfjsLib = await loadMaintenancePdfJs();
+    const arrayBuffer = await file.arrayBuffer();
+    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+    const pdf = await loadingTask.promise;
+    const maxPages = Math.min(pdf.numPages || 1, 8);
+
+    container.innerHTML = '';
+    for (let pageNumber = 1; pageNumber <= maxPages; pageNumber++) {
+        const page = await pdf.getPage(pageNumber);
+        const viewport = page.getViewport({ scale: 1.25 });
+
+        const pageNode = document.createElement('div');
+        pageNode.className = 'maintenance-pdf-page';
+        pageNode.style.width = `${Math.floor(viewport.width)}px`;
+        pageNode.style.height = `${Math.floor(viewport.height)}px`;
+
+        const canvas = document.createElement('canvas');
+        canvas.className = 'maintenance-pdf-canvas';
+        canvas.width = Math.max(1, Math.floor(viewport.width));
+        canvas.height = Math.max(1, Math.floor(viewport.height));
+        canvas.style.width = `${Math.floor(viewport.width)}px`;
+        canvas.style.height = `${Math.floor(viewport.height)}px`;
+        const context = canvas.getContext('2d');
+        if (context) {
+            await page.render({ canvasContext: context, viewport }).promise;
+        }
+
+        const textLayer = document.createElement('div');
+        textLayer.className = 'maintenance-pdf-text-layer';
+        textLayer.style.width = `${Math.floor(viewport.width)}px`;
+        textLayer.style.height = `${Math.floor(viewport.height)}px`;
+
+        const textContent = await page.getTextContent();
+        const items = Array.isArray(textContent?.items) ? textContent.items : [];
+        items.forEach(item => {
+            const content = String(item?.str || '');
+            if (!content.trim()) return;
+
+            const transform = pdfjsLib.Util.transform(viewport.transform, item.transform);
+            const fontHeight = Math.hypot(transform[2], transform[3]);
+            const angle = Math.atan2(transform[1], transform[0]);
+
+            const span = document.createElement('span');
+            span.textContent = content;
+            span.style.left = `${transform[4]}px`;
+            span.style.top = `${transform[5] - fontHeight}px`;
+            span.style.fontSize = `${fontHeight}px`;
+            span.style.fontFamily = String(item?.fontName || 'sans-serif');
+            const scaleX = fontHeight ? (Math.hypot(transform[0], transform[1]) / fontHeight) : 1;
+            span.style.transform = `rotate(${angle}rad) scaleX(${scaleX})`;
+
+            textLayer.appendChild(span);
+        });
+
+        pageNode.appendChild(canvas);
+        pageNode.appendChild(textLayer);
+        container.appendChild(pageNode);
+    }
+}
+
+function buildAlternativeLlmPrompt({ supplierName = '', invoiceDate = '', iban = '', totalAmount = null, currency = 'EUR', rawText = '' } = {}) {
+    const supplier = supplierName || t('Non confirmé', 'No confirmado');
+    const date = invoiceDate || t('Non détectée', 'No detectada');
+    const ibanValue = iban || t('Non détecté', 'No detectado');
+    const amount = Number.isFinite(totalAmount) && totalAmount > 0
+        ? `${totalAmount.toFixed(2)} ${String(currency || 'EUR').toUpperCase()}`
+        : t('Non détecté', 'No detectado');
+    const excerpt = String(rawText || '').trim().slice(0, 12000);
+
+    return currentLanguage === 'es'
+        ? [
+            'Analiza críticamente esta factura náutica y devuelve un informe accionable.',
+            `Proveedor: ${supplier}`,
+            `Fecha: ${date}`,
+            `IBAN: ${ibanValue}`,
+            `Importe: ${amount}`,
+            '',
+            'Texto OCR/PDF:',
+            excerpt || '(sin texto)',
+            '',
+            'Responde con secciones: Riesgos, Controles antes de pago, Prevención 30-90 días, Alertas de fraude/error, Resumen ejecutivo.'
+        ].join('\n')
+        : [
+            'Analyse cette facture nautique de façon critique et produis un rapport actionnable.',
+            `Fournisseur: ${supplier}`,
+            `Date: ${date}`,
+            `IBAN: ${ibanValue}`,
+            `Montant: ${amount}`,
+            '',
+            'Texte OCR/PDF:',
+            excerpt || '(pas de texte)',
+            '',
+            'Réponds avec les sections: Risques, Contrôles avant paiement, Prévention 30-90 jours, Alertes fraude/erreur, Résumé exécutif.'
+        ].join('\n');
+}
+
+async function requestAlternativeLlmAnalysis({ provider = '', apiKey = '', model = '', prompt = '' } = {}) {
+    const safeProvider = String(provider || '').trim().toLowerCase();
+    const safeApiKey = sanitizeApiKey(apiKey);
+    const safeModel = String(model || '').trim();
+    if (!safeProvider || !safeApiKey || !safeModel || !prompt) {
+        throw new Error(t('Paramètres IA incomplets.', 'Parámetros IA incompletos.'));
+    }
+
+    if (safeProvider === 'openai') {
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${safeApiKey}`
+            },
+            body: JSON.stringify({
+                model: safeModel,
+                messages: [
+                    { role: 'system', content: 'You are a marine maintenance invoice analyst. Be precise and practical.' },
+                    { role: 'user', content: prompt }
+                ],
+                temperature: 0.2
+            })
+        });
+        if (!response.ok) {
+            throw await buildAlternativeLlmHttpError('OpenAI', response);
+        }
+        const data = await response.json();
+        return String(data?.choices?.[0]?.message?.content || '').trim();
+    }
+
+    if (safeProvider === 'anthropic') {
+        const response = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': safeApiKey,
+                'anthropic-version': '2023-06-01'
+            },
+            body: JSON.stringify({
+                model: safeModel,
+                max_tokens: 1400,
+                temperature: 0.2,
+                messages: [
+                    { role: 'user', content: prompt }
+                ]
+            })
+        });
+        if (!response.ok) {
+            throw await buildAlternativeLlmHttpError('Anthropic', response);
+        }
+        const data = await response.json();
+        const blocks = Array.isArray(data?.content) ? data.content : [];
+        return blocks.map(item => String(item?.text || '')).join('\n').trim();
+    }
+
+    throw new Error(t('Provider IA non supporté.', 'Proveedor IA no soportado.'));
+}
+
+async function testAlternativeLlmConnection({ provider = '', apiKey = '', model = '' } = {}) {
+    const safeProvider = String(provider || '').trim().toLowerCase();
+    const safeApiKey = sanitizeApiKey(apiKey);
+    const safeModel = String(model || '').trim();
+    if (!safeProvider || !safeApiKey || !safeModel) {
+        throw new Error(t('Paramètres IA incomplets.', 'Parámetros IA incompletos.'));
+    }
+
+    if (safeProvider === 'openai') {
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${safeApiKey}`
+            },
+            body: JSON.stringify({
+                model: safeModel,
+                messages: [{ role: 'user', content: 'Ping' }],
+                max_tokens: 3,
+                temperature: 0
+            })
+        });
+        if (!response.ok) {
+            throw await buildAlternativeLlmHttpError('OpenAI', response);
+        }
+        return true;
+    }
+
+    if (safeProvider === 'anthropic') {
+        const response = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': safeApiKey,
+                'anthropic-version': '2023-06-01'
+            },
+            body: JSON.stringify({
+                model: safeModel,
+                max_tokens: 3,
+                temperature: 0,
+                messages: [{ role: 'user', content: 'Ping' }]
+            })
+        });
+        if (!response.ok) {
+            throw await buildAlternativeLlmHttpError('Anthropic', response);
+        }
+        return true;
+    }
+
+    throw new Error(t('Provider IA non supporté.', 'Proveedor IA no soportado.'));
+}
+
+function formatAlternativeLlmRuntimeError(error, provider) {
+    const raw = String(error?.message || error || '');
+    const normalizedProvider = String(provider || '').toLowerCase();
+    const failedFetch = /failed to fetch|networkerror|network error|load failed/i.test(raw);
+    if (failedFetch) {
+        if (normalizedProvider === 'anthropic') {
+            return t(
+                'Connexion impossible (navigateur/CORS). Anthropic bloque souvent les appels directs depuis une app web locale. Utilise un proxy backend (ex: Supabase Edge Function) ou OpenAI dans cette app.',
+                'Conexión imposible (navegador/CORS). Anthropic suele bloquear llamadas directas desde una app web local. Usa un proxy backend (ej: Supabase Edge Function) u OpenAI en esta app.'
+            );
+        }
+        return t(
+            'Connexion réseau impossible vers le provider IA (CORS/pare-feu/adblock).',
+            'Conexión de red imposible con el proveedor IA (CORS/firewall/adblock).'
+        );
+    }
+    return raw;
+}
+
+function sanitizeApiKey(rawValue) {
+    return String(rawValue || '')
+        .normalize('NFKC')
+        .replace(/[\u200B-\u200D\uFEFF]/g, '')
+        .replace(/[\u00A0\u202F]/g, ' ')
+        .replace(/[`'"“”‘’]/g, '')
+        .replace(/\s+/g, '')
+        .replace(/[^\x20-\x7E]/g, '')
+        .trim();
+}
+
+async function buildAlternativeLlmHttpError(providerLabel, response) {
+    const status = Number(response?.status || 0);
+    let details = '';
+
+    try {
+        const payload = await response.json();
+        details = String(
+            payload?.error?.message ||
+            payload?.message ||
+            payload?.detail ||
+            ''
+        ).trim();
+    } catch (_) {
+        try {
+            const text = String(await response.text()).trim();
+            details = text.slice(0, 220);
+        } catch (__){
+            details = '';
+        }
+    }
+
+    let hint = '';
+    if (status === 401) {
+        hint = t(
+            'clé invalide/expirée ou sans droit API; vérifie la clé complète et le projet API activé',
+            'clave inválida/caducada o sin permisos API; verifica clave completa y proyecto API activo'
+        );
+    } else if (status === 404) {
+        hint = t(
+            'modèle introuvable; vérifie le nom exact du modèle',
+            'modelo no encontrado; verifica el nombre exacto del modelo'
+        );
+    } else if (status === 429) {
+        hint = t(
+            'quota/limite atteinte; attends un peu ou augmente les quotas',
+            'cuota/límite alcanzado; espera o aumenta cuotas'
+        );
+    }
+
+    const parts = [`${providerLabel} ${status || ''}`.trim()];
+    if (details) parts.push(details);
+    if (hint) parts.push(hint);
+    return new Error(parts.join(' · '));
+}
+
+async function runTesseractRecognition(input) {
+    if (!maintenanceTesseractLoader) {
+        maintenanceTesseractLoader = import('https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/tesseract.esm.min.js');
+    }
+    const tesseractModule = await maintenanceTesseractLoader;
+    const { data } = await tesseractModule.recognize(input, 'eng+spa+fra');
+    return String(data?.text || '');
+}
+
+async function runInvoiceScanFromImage(file) {
+    if (!file || !file.type.startsWith('image/')) {
+        throw new Error(t('Le scan image nécessite un fichier image.', 'El escaneo de imagen requiere un archivo de imagen.'));
+    }
+    return runTesseractRecognition(file);
+}
+
+async function runInvoiceScanFromPdf(file) {
+    if (!file || !String(file.type || '').includes('pdf')) {
+        throw new Error(t('Le scan PDF nécessite un fichier PDF.', 'El escaneo PDF requiere un archivo PDF.'));
+    }
+
+    const pdfjsLib = await loadMaintenancePdfJs();
+
+    const arrayBuffer = await file.arrayBuffer();
+    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+    const pdf = await loadingTask.promise;
+    const maxPages = Math.min(pdf.numPages || 1, 4);
+
+    const textChunks = [];
+    for (let pageNumber = 1; pageNumber <= maxPages; pageNumber++) {
+        const page = await pdf.getPage(pageNumber);
+        const content = await page.getTextContent();
+        const items = Array.isArray(content?.items) ? content.items : [];
+        if (!items.length) continue;
+
+        const rows = new Map();
+        items.forEach(item => {
+            const y = Number(item?.transform?.[5]);
+            const key = Number.isFinite(y) ? String(Math.round(y / 2) * 2) : '0';
+            const chunk = String(item?.str || '').trim();
+            if (!chunk) return;
+            if (!rows.has(key)) rows.set(key, []);
+            rows.get(key).push(chunk);
+        });
+
+        const lines = [...rows.entries()]
+            .sort((a, b) => Number(b[0]) - Number(a[0]))
+            .map(([, row]) => row.join(' '))
+            .filter(Boolean);
+
+        if (lines.length) {
+            textChunks.push(lines.join('\n'));
+        }
+    }
+
+    let extractedText = textChunks.join('\n');
+    if (extractedText.replace(/\s+/g, '').length >= 40) {
+        return extractedText;
+    }
+
+    const ocrChunks = [];
+    for (let pageNumber = 1; pageNumber <= maxPages; pageNumber++) {
+        const page = await pdf.getPage(pageNumber);
+        const viewport = page.getViewport({ scale: 1.6 });
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        if (!context) continue;
+        canvas.width = Math.max(1, Math.floor(viewport.width));
+        canvas.height = Math.max(1, Math.floor(viewport.height));
+        await page.render({ canvasContext: context, viewport }).promise;
+        const pageText = await runTesseractRecognition(canvas);
+        if (pageText.trim()) {
+            ocrChunks.push(pageText.trim());
+        }
+    }
+
+    extractedText = [extractedText, ...ocrChunks].filter(Boolean).join('\n');
+    return extractedText;
+}
+
+async function runInvoiceScan(file) {
+    if (!file) {
+        throw new Error(t('Aucun fichier sélectionné.', 'Ningún archivo seleccionado.'));
+    }
+    if (String(file.type || '').includes('pdf') || /\.pdf$/i.test(String(file.name || ''))) {
+        return runInvoiceScanFromPdf(file);
+    }
+    return runInvoiceScanFromImage(file);
+}
+
 function sanitizeMaintenanceBoard(board, fallbackIndex = 0) {
     const safeName = String(board?.name || `${t('Schéma', 'Esquema')} ${fallbackIndex + 1}`).trim() || `${t('Schéma', 'Esquema')} ${fallbackIndex + 1}`;
     const safeImageDataUrl = typeof board?.imageDataUrl === 'string' ? board.imageDataUrl : '';
@@ -3653,6 +4753,7 @@ function sanitizeMaintenanceBoard(board, fallbackIndex = 0) {
                 xPercent: Math.max(0, Math.min(100, xPercent)),
                 yPercent: Math.max(0, Math.min(100, yPercent)),
                 colorKey: colorMeta.key,
+                statusKey: normalizeMaintenanceTaskStatus(annotation?.statusKey),
                 legend: String(annotation?.legend || '').trim(),
                 createdAt: String(annotation?.createdAt || new Date().toISOString())
             };
@@ -3758,6 +4859,33 @@ function setActiveMaintenanceAnnotation(annotationId) {
     });
 }
 
+function setActiveMaintenanceSubtab(tabKey) {
+    activeMaintenanceSubtab = ['tasks', 'expenses', 'suppliers'].includes(tabKey) ? tabKey : 'tasks';
+
+    const tabBtnMap = {
+        tasks: document.getElementById('maintenanceTasksSubtabBtn'),
+        expenses: document.getElementById('maintenanceExpensesSubtabBtn'),
+        suppliers: document.getElementById('maintenanceSuppliersSubtabBtn')
+    };
+    const panelMap = {
+        tasks: document.getElementById('maintenanceTasksPanel'),
+        expenses: document.getElementById('maintenanceExpensesPanel'),
+        suppliers: document.getElementById('maintenanceSuppliersPanel')
+    };
+
+    Object.entries(tabBtnMap).forEach(([key, node]) => {
+        if (!node) return;
+        node.classList.toggle('active', key === activeMaintenanceSubtab);
+    });
+
+    Object.entries(panelMap).forEach(([key, node]) => {
+        if (!node) return;
+        node.classList.toggle('active', key === activeMaintenanceSubtab);
+    });
+
+    window.dispatchEvent(new CustomEvent('ceibo:maintenance-subtab-changed'));
+}
+
 function renderMaintenanceBoard() {
     const image = document.getElementById('maintenanceSchemaImage');
     const pinsLayer = document.getElementById('maintenancePinsLayer');
@@ -3798,9 +4926,13 @@ function renderMaintenanceBoard() {
     board.annotations.forEach((annotation, index) => {
         const pointLabel = `${t('Point', 'Punto')} ${index + 1}`;
         const pinColorMeta = getMaintenanceColorMeta(annotation.colorKey);
+        const statusMeta = getMaintenanceTaskStatusMeta(annotation.statusKey);
 
         const pin = document.createElement('div');
         pin.className = 'maintenance-pin';
+        if (statusMeta.key === 'done') {
+            pin.classList.add('maintenance-pin--done');
+        }
         pin.setAttribute('data-ann-id', annotation.id);
         pin.setAttribute('data-board-id', board.id);
         pin.style.left = `${annotation.xPercent}%`;
@@ -3839,6 +4971,9 @@ function renderMaintenanceBoard() {
         }
 
         const sortedAnnotations = [...schemaBoard.annotations].sort((a, b) => {
+            const statusRankA = MAINTENANCE_TASK_STATUS_ORDER.indexOf(normalizeMaintenanceTaskStatus(a.statusKey));
+            const statusRankB = MAINTENANCE_TASK_STATUS_ORDER.indexOf(normalizeMaintenanceTaskStatus(b.statusKey));
+            if (statusRankA !== statusRankB) return statusRankA - statusRankB;
             const colorA = getMaintenanceColorMeta(a.colorKey).key;
             const colorB = getMaintenanceColorMeta(b.colorKey).key;
             const rankA = MAINTENANCE_COLOR_ORDER.indexOf(colorA);
@@ -3849,10 +4984,14 @@ function renderMaintenanceBoard() {
 
         sortedAnnotations.forEach((annotation, index) => {
             const colorMeta = getMaintenanceColorMeta(annotation.colorKey);
+            const statusMeta = getMaintenanceTaskStatusMeta(annotation.statusKey);
             const pointLabel = `${t('Point', 'Punto')} ${index + 1}`;
 
             const item = document.createElement('div');
             item.className = 'maintenance-legend-item';
+            if (statusMeta.key === 'done') {
+                item.classList.add('maintenance-legend-item--done');
+            }
             item.setAttribute('data-ann-id', annotation.id);
             item.setAttribute('data-board-id', schemaBoard.id);
 
@@ -3869,6 +5008,34 @@ function renderMaintenanceBoard() {
             left.appendChild(dot);
             left.appendChild(title);
             left.appendChild(document.createTextNode(` — ${annotation.legend || t('Sans légende', 'Sin leyenda')}`));
+
+            const statusBadge = document.createElement('span');
+            statusBadge.className = 'maintenance-status-badge';
+            statusBadge.textContent = t(statusMeta.fr, statusMeta.es);
+            left.appendChild(statusBadge);
+
+            const controlsWrap = document.createElement('div');
+            controlsWrap.style.display = 'flex';
+            controlsWrap.style.gap = '6px';
+            controlsWrap.style.alignItems = 'center';
+
+            const statusSelect = document.createElement('select');
+            statusSelect.className = 'maintenance-status-select';
+            statusSelect.style.padding = '4px 6px';
+            statusSelect.style.fontSize = '10px';
+            statusSelect.innerHTML =
+                `<option value="active">${t('Actif', 'Activo')}</option>` +
+                `<option value="planned">${t('À prévoir', 'A prever')}</option>` +
+                `<option value="done">${t('Fini', 'Terminado')}</option>`;
+            statusSelect.value = statusMeta.key;
+            statusSelect.addEventListener('click', event => event.stopPropagation());
+            statusSelect.addEventListener('change', event => {
+                event.stopPropagation();
+                annotation.statusKey = normalizeMaintenanceTaskStatus(statusSelect.value);
+                schemaBoard.updatedAt = new Date().toISOString();
+                persistMaintenanceBoards();
+                renderMaintenanceBoard();
+            });
 
             const deleteBtn = document.createElement('button');
             deleteBtn.type = 'button';
@@ -3893,7 +5060,9 @@ function renderMaintenanceBoard() {
             });
 
             head.appendChild(left);
-            head.appendChild(deleteBtn);
+            controlsWrap.appendChild(statusSelect);
+            controlsWrap.appendChild(deleteBtn);
+            head.appendChild(controlsWrap);
             item.appendChild(head);
             schemaGroup.appendChild(item);
         });
@@ -3909,6 +5078,9 @@ function renderMaintenanceBoard() {
 }
 
 function initializeMaintenanceFeature() {
+    const tasksSubtabBtn = document.getElementById('maintenanceTasksSubtabBtn');
+    const expensesSubtabBtn = document.getElementById('maintenanceExpensesSubtabBtn');
+    const suppliersSubtabBtn = document.getElementById('maintenanceSuppliersSubtabBtn');
     const schemaNameInput = document.getElementById('maintenanceSchemaNameInput');
     const schemaInput = document.getElementById('maintenanceSchemaInput');
     const addBtn = document.getElementById('maintenanceAddSchemaBtn');
@@ -3916,20 +5088,237 @@ function initializeMaintenanceFeature() {
     const schemaSelect = document.getElementById('maintenanceSchemaSelect');
     const toggleSchemaManagerBtn = document.getElementById('maintenanceToggleSchemaManagerBtn');
     const pinColorInput = document.getElementById('maintenancePinColorInput');
+    const taskStatusInput = document.getElementById('maintenanceTaskStatusInput');
     const legendInput = document.getElementById('maintenanceLegendInput');
     const canvas = document.getElementById('maintenanceCanvas');
     const image = document.getElementById('maintenanceSchemaImage');
+    const invoiceInput = document.getElementById('maintenanceInvoiceInput');
+    const scanInvoiceBtn = document.getElementById('maintenanceScanInvoiceBtn');
+    const invoiceScanStatus = document.getElementById('maintenanceInvoiceScanStatus');
+    const supplierSuggestionsLabel = document.getElementById('maintenanceSupplierSuggestionsLabel');
+    const supplierSuggestionsContainer = document.getElementById('maintenanceSupplierSuggestions');
+    const invoiceReviewPanel = document.getElementById('maintenanceInvoiceReviewPanel');
+    const manualPasteTargetSelect = document.getElementById('maintenanceManualPasteTargetSelect');
+    const pasteSelectedTextBtn = document.getElementById('maintenancePasteSelectedTextBtn');
+    const llmProviderSelect = document.getElementById('maintenanceLlmProviderSelect');
+    const llmApiKeyInput = document.getElementById('maintenanceLlmApiKeyInput');
+    const llmModelInput = document.getElementById('maintenanceLlmModelInput');
+    const testAltLlmBtn = document.getElementById('maintenanceTestAltLlmBtn');
+    const runAltLlmBtn = document.getElementById('maintenanceRunAltLlmBtn');
+    const invoicePreviewImage = document.getElementById('maintenanceInvoicePreviewImage');
+    const invoicePreviewPdfContainer = document.getElementById('maintenanceInvoicePreviewPdfContainer');
+    const invoicePreviewPlaceholder = document.getElementById('maintenanceInvoicePreviewPlaceholder');
+    const invoicePreviewTitle = document.getElementById('maintenanceInvoicePreviewTitle');
+    const expenseDateInput = document.getElementById('maintenanceExpenseDateInput');
+    const expenseTotalInput = document.getElementById('maintenanceExpenseTotalInput');
+    const expenseCurrencyInput = document.getElementById('maintenanceExpenseCurrencyInput');
+    const expensePayerSelect = document.getElementById('maintenanceExpensePayerSelect');
+    const expensePaymentStatusSelect = document.getElementById('maintenanceExpensePaymentStatusSelect');
+    const expenseSupplierInput = document.getElementById('maintenanceExpenseSupplierInput');
+    const expenseSupplierIbanInput = document.getElementById('maintenanceExpenseSupplierIbanInput');
+    const expenseLinesInput = document.getElementById('maintenanceExpenseLinesInput');
+    const expenseNoteInput = document.getElementById('maintenanceExpenseNoteInput');
+    const expenseAiCommentInput = document.getElementById('maintenanceExpenseAiCommentInput');
+    const addExpenseBtn = document.getElementById('maintenanceAddExpenseBtn');
+    const supplierNameInput = document.getElementById('maintenanceSupplierNameInput');
+    const supplierContactInput = document.getElementById('maintenanceSupplierContactInput');
+    const supplierPhoneInput = document.getElementById('maintenanceSupplierPhoneInput');
+    const supplierIbanInput = document.getElementById('maintenanceSupplierIbanInput');
+    const supplierNoteInput = document.getElementById('maintenanceSupplierNoteInput');
+    const addSupplierBtn = document.getElementById('maintenanceAddSupplierBtn');
 
-    if (!schemaNameInput || !schemaInput || !addBtn || !deleteBtn || !schemaSelect || !toggleSchemaManagerBtn || !pinColorInput || !legendInput || !canvas || !image) return;
+    if (!tasksSubtabBtn || !expensesSubtabBtn || !suppliersSubtabBtn || !schemaNameInput || !schemaInput || !addBtn || !deleteBtn || !schemaSelect || !toggleSchemaManagerBtn || !pinColorInput || !taskStatusInput || !legendInput || !canvas || !image || !invoiceInput || !scanInvoiceBtn || !invoiceScanStatus || !supplierSuggestionsLabel || !supplierSuggestionsContainer || !invoiceReviewPanel || !manualPasteTargetSelect || !pasteSelectedTextBtn || !llmProviderSelect || !llmApiKeyInput || !llmModelInput || !testAltLlmBtn || !runAltLlmBtn || !invoicePreviewImage || !invoicePreviewPdfContainer || !invoicePreviewPlaceholder || !invoicePreviewTitle || !expenseDateInput || !expenseTotalInput || !expenseCurrencyInput || !expensePayerSelect || !expensePaymentStatusSelect || !expenseSupplierInput || !expenseSupplierIbanInput || !expenseLinesInput || !expenseNoteInput || !expenseAiCommentInput || !addExpenseBtn || !supplierNameInput || !supplierContactInput || !supplierPhoneInput || !supplierIbanInput || !supplierNoteInput || !addSupplierBtn) return;
+
+    const applyClipboardTextToTarget = (text) => {
+        const value = String(text || '').trim();
+        if (!value) return false;
+
+        const target = String(manualPasteTargetSelect.value || 'expenseSupplier');
+        if (target === 'expenseSupplier') {
+            expenseSupplierInput.value = value;
+            supplierNameInput.value = value;
+            return true;
+        }
+        if (target === 'supplierContact') {
+            supplierContactInput.value = value;
+            return true;
+        }
+        if (target === 'supplierPhone') {
+            supplierPhoneInput.value = value;
+            return true;
+        }
+        if (target === 'supplierEmailToNote') {
+            const current = String(supplierNoteInput.value || '').trim();
+            const emailLine = `Email: ${value}`;
+            supplierNoteInput.value = current ? `${current}\n${emailLine}` : emailLine;
+            return true;
+        }
+        if (target === 'expenseIban') {
+            expenseSupplierIbanInput.value = normalizeIbanValue(value) || value;
+            supplierIbanInput.value = expenseSupplierIbanInput.value;
+            return true;
+        }
+        if (target === 'expenseAmount') {
+            const parsed = toFiniteAmount(value.replace(/\s/g, '').replace(',', '.'));
+            if (!Number.isFinite(parsed) || parsed <= 0) return false;
+            expenseTotalInput.value = parsed.toFixed(2);
+            return true;
+        }
+        if (target === 'expenseAiComment') {
+            expenseAiCommentInput.value = value;
+            return true;
+        }
+        if (target === 'expenseNote') {
+            expenseNoteInput.value = value;
+            return true;
+        }
+        return false;
+    };
+
+    const updateInvoicePreview = (file) => {
+        if (maintenanceInvoicePreviewUrl) {
+            URL.revokeObjectURL(maintenanceInvoicePreviewUrl);
+            maintenanceInvoicePreviewUrl = '';
+        }
+        maintenanceInvoicePreviewType = '';
+
+        if (!file) {
+            invoicePreviewImage.style.display = 'none';
+            invoicePreviewImage.removeAttribute('src');
+            invoicePreviewPdfContainer.style.display = 'none';
+            invoicePreviewPdfContainer.innerHTML = '';
+            invoicePreviewPlaceholder.style.display = 'flex';
+            invoicePreviewTitle.style.display = 'none';
+            window.dispatchEvent(new CustomEvent('ceibo:maintenance-subtab-changed'));
+            return;
+        }
+
+        maintenanceInvoicePreviewUrl = URL.createObjectURL(file);
+        maintenanceInvoicePreviewType = String(file.type || '').toLowerCase();
+
+        invoicePreviewPlaceholder.style.display = 'none';
+        invoicePreviewTitle.style.display = 'flex';
+
+        if (maintenanceInvoicePreviewType.includes('pdf')) {
+            invoicePreviewImage.style.display = 'none';
+            invoicePreviewImage.removeAttribute('src');
+            invoicePreviewPdfContainer.style.display = 'block';
+            invoicePreviewPdfContainer.innerHTML = `<div class="maintenance-canvas-placeholder" style="min-height:120px;">${t('Chargement PDF...', 'Cargando PDF...')}</div>`;
+            renderSelectablePdfPreview(file, invoicePreviewPdfContainer).catch(error => {
+                invoicePreviewPdfContainer.innerHTML = `<div class="maintenance-canvas-placeholder" style="min-height:120px;">${escapeHtml(t('Impossible d\'afficher le PDF', 'No se puede mostrar el PDF'))}: ${escapeHtml(String(error?.message || error))}</div>`;
+            });
+        } else {
+            invoicePreviewPdfContainer.style.display = 'none';
+            invoicePreviewPdfContainer.innerHTML = '';
+            invoicePreviewImage.style.display = 'block';
+            invoicePreviewImage.src = maintenanceInvoicePreviewUrl;
+        }
+
+        window.dispatchEvent(new CustomEvent('ceibo:maintenance-subtab-changed'));
+    };
+
+    invoiceInput.addEventListener('change', () => {
+        const file = invoiceInput.files?.[0] || null;
+        updateInvoicePreview(file);
+        invoiceReviewPanel.style.display = file ? 'block' : 'none';
+    });
+
+    const defaultModelByProvider = {
+        openai: 'gpt-4o-mini',
+        anthropic: 'claude-3-5-haiku-latest'
+    };
+
+    llmProviderSelect.value = String(localStorage.getItem(MAINTENANCE_LLM_PROVIDER_STORAGE_KEY) || '');
+    llmApiKeyInput.value = String(localStorage.getItem(MAINTENANCE_LLM_API_KEY_STORAGE_KEY) || '');
+    llmModelInput.value = String(localStorage.getItem(MAINTENANCE_LLM_MODEL_STORAGE_KEY) || '');
+    if (!llmModelInput.value && defaultModelByProvider[llmProviderSelect.value]) {
+        llmModelInput.value = defaultModelByProvider[llmProviderSelect.value];
+    }
+
+    llmProviderSelect.addEventListener('change', () => {
+        const provider = String(llmProviderSelect.value || '');
+        localStorage.setItem(MAINTENANCE_LLM_PROVIDER_STORAGE_KEY, provider);
+        if (!llmModelInput.value && defaultModelByProvider[provider]) {
+            llmModelInput.value = defaultModelByProvider[provider];
+        }
+    });
+    llmApiKeyInput.addEventListener('change', () => {
+        const sanitized = sanitizeApiKey(llmApiKeyInput.value);
+        llmApiKeyInput.value = sanitized;
+        localStorage.setItem(MAINTENANCE_LLM_API_KEY_STORAGE_KEY, sanitized);
+    });
+    llmModelInput.addEventListener('change', () => {
+        localStorage.setItem(MAINTENANCE_LLM_MODEL_STORAGE_KEY, String(llmModelInput.value || '').trim());
+    });
+
+    const applySupplierSelection = (name) => {
+        const selectedName = String(name || '').trim();
+        if (!selectedName) return;
+        expenseSupplierInput.value = selectedName;
+        supplierNameInput.value = selectedName;
+
+        const existingSupplier = findMaintenanceSupplierByName(selectedName);
+        if (existingSupplier) {
+            supplierContactInput.value = existingSupplier.contact || '';
+            supplierPhoneInput.value = existingSupplier.emergencyPhone || '';
+            supplierNoteInput.value = existingSupplier.note || '';
+            if (existingSupplier.iban) {
+                expenseSupplierIbanInput.value = existingSupplier.iban;
+                supplierIbanInput.value = existingSupplier.iban;
+            }
+        }
+    };
+
+    const renderSupplierSuggestions = (candidates) => {
+        const safeList = Array.isArray(candidates) ? candidates.filter(item => String(item?.name || '').trim()) : [];
+        supplierSuggestionsContainer.innerHTML = '';
+        if (!safeList.length) {
+            supplierSuggestionsLabel.style.display = 'none';
+            supplierSuggestionsContainer.style.display = 'none';
+            return;
+        }
+
+        supplierSuggestionsLabel.style.display = 'block';
+        supplierSuggestionsContainer.style.display = 'flex';
+
+        safeList.slice(0, 3).forEach(item => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'maintenance-supplier-suggestion-btn';
+            const confidenceLabel = item.confidence === 'high'
+                ? t('fiable', 'fiable')
+                : item.confidence === 'medium'
+                    ? t('moyen', 'medio')
+                    : t('faible', 'baja');
+            btn.textContent = `${item.name} · ${confidenceLabel}`;
+            btn.addEventListener('click', () => {
+                applySupplierSelection(item.name);
+                invoiceScanStatus.textContent = `${t('Fournisseur sélectionné', 'Proveedor seleccionado')}: ${item.name}`;
+            });
+            supplierSuggestionsContainer.appendChild(btn);
+        });
+    };
 
     pinColorInput.value = 'red';
+    taskStatusInput.value = 'active';
+    expenseCurrencyInput.value = 'EUR';
+    expenseDateInput.value = new Date().toISOString().slice(0, 10);
     setMaintenanceSchemaManagerVisibility(false);
+    setActiveMaintenanceSubtab('tasks');
 
     loadMaintenanceBoards();
+    loadMaintenanceExpenses();
+    loadMaintenanceSuppliers();
     if (!maintenanceBoards.length) {
         setMaintenanceSchemaManagerVisibility(true);
     }
     renderMaintenanceBoard();
+    renderMaintenanceExpenses();
+    renderMaintenanceSuppliers();
+
+    tasksSubtabBtn.addEventListener('click', () => setActiveMaintenanceSubtab('tasks'));
+    expensesSubtabBtn.addEventListener('click', () => setActiveMaintenanceSubtab('expenses'));
+    suppliersSubtabBtn.addEventListener('click', () => setActiveMaintenanceSubtab('suppliers'));
 
     toggleSchemaManagerBtn.addEventListener('click', () => {
         setMaintenanceSchemaManagerVisibility(!maintenanceSchemaManagerVisible);
@@ -4011,6 +5400,7 @@ function initializeMaintenanceFeature() {
             xPercent: Math.max(0, Math.min(100, xPercent)),
             yPercent: Math.max(0, Math.min(100, yPercent)),
             colorKey: colorMeta.key,
+            statusKey: normalizeMaintenanceTaskStatus(taskStatusInput.value),
             legend,
             createdAt: new Date().toISOString()
         });
@@ -4020,6 +5410,296 @@ function initializeMaintenanceFeature() {
         legendInput.value = '';
         renderMaintenanceBoard();
         setMaintenanceStatus(t('Pastille ajoutée.', 'Marcador añadido.'));
+    });
+
+    scanInvoiceBtn.addEventListener('click', async () => {
+        const file = invoiceInput.files?.[0];
+        if (!file) {
+            invoiceScanStatus.textContent = t('Scan facture: choisis un fichier image ou PDF.', 'Escaneo factura: elige un archivo imagen o PDF.');
+            return;
+        }
+
+        try {
+            invoiceScanStatus.textContent = t('Scan facture: analyse en cours...', 'Escaneo factura: analizando...');
+            const text = await runInvoiceScan(file);
+            maintenanceLastScannedText = text;
+            const extracted = extractInvoiceFields(text, file.name);
+            const supplierCandidates = getSupplierCandidatesFromText(text, file.name);
+            const supplier = extracted.supplierName;
+            const supplierConfidence = extracted.supplierConfidence;
+            const supplierSource = extracted.supplierSource;
+            const iban = extracted.iban;
+            const total = extracted.totalAmount;
+            const invoiceDate = extracted.date;
+            const hasReliableSupplier = supplier && (
+                supplierConfidence === 'high' ||
+                (supplierConfidence === 'medium' && ['directory', 'label'].includes(String(supplierSource || '')))
+            );
+            const matchedSupplier = hasReliableSupplier ? findMaintenanceSupplierByName(supplier) : null;
+            let ibanConflictDetected = false;
+
+            if (invoiceDate) {
+                expenseDateInput.value = invoiceDate;
+            }
+
+            invoiceReviewPanel.style.display = 'block';
+
+            renderSupplierSuggestions(supplierCandidates);
+
+            if (hasReliableSupplier) {
+                applySupplierSelection(supplier);
+            }
+            if (iban && hasReliableSupplier) {
+                const scannedIban = normalizeIbanValue(iban);
+                const knownIban = normalizeIbanValue(matchedSupplier?.iban || '');
+                if (knownIban && scannedIban && knownIban !== scannedIban) {
+                    ibanConflictDetected = true;
+                    expenseSupplierIbanInput.value = matchedSupplier.iban;
+                    supplierIbanInput.value = matchedSupplier.iban;
+                } else {
+                    expenseSupplierIbanInput.value = iban;
+                    supplierIbanInput.value = iban;
+                }
+            }
+            if (Number.isFinite(total) && total > 0) {
+                expenseTotalInput.value = total.toFixed(2);
+            }
+
+            if (hasReliableSupplier && matchedSupplier) {
+                supplierContactInput.value = matchedSupplier.contact || '';
+                supplierPhoneInput.value = matchedSupplier.emergencyPhone || '';
+                supplierNoteInput.value = matchedSupplier.note || '';
+                if (!iban && matchedSupplier.iban) {
+                    expenseSupplierIbanInput.value = matchedSupplier.iban;
+                    supplierIbanInput.value = matchedSupplier.iban;
+                    }
+            }
+
+            const rawCandidateLines = text
+                .split(/\r?\n/)
+                .map(line => line.trim())
+                .filter(line => /\d/.test(line) && /[€$]|\b\d+[.,]\d{2}\b/.test(line))
+                .slice(0, 12);
+            const analysisLines = text
+                .split(/\r?\n/)
+                .map(line => line.trim())
+                .filter(line => line.length >= 4)
+                .slice(0, 30);
+            const candidateLines = rawCandidateLines.map(line => `${line} ; ; ;`);
+            if (candidateLines.length && !expenseLinesInput.value.trim()) {
+                expenseLinesInput.value = candidateLines.join('\n');
+            }
+
+            const autoComment = buildExpensePreventionComment({
+                supplierName: supplier,
+                totalAmount: total,
+                detectedLines: analysisLines
+            });
+            expenseAiCommentInput.value = autoComment;
+
+            const summaryParts = [];
+            if (supplier) {
+                const confidenceLabel = supplierConfidence === 'high'
+                    ? t('fiable', 'fiable')
+                    : supplierConfidence === 'medium'
+                        ? t('moyen', 'medio')
+                        : t('faible', 'baja');
+                summaryParts.push(`${t('fournisseur', 'proveedor')}: ${supplier} (${confidenceLabel}/${String(supplierSource || 'heuristic')})`);
+                if (supplierConfidence === 'low') {
+                    summaryParts.push(t('vérifier fournisseur', 'verificar proveedor'));
+                }
+            }
+            if (invoiceDate) summaryParts.push(`${t('date', 'fecha')}: ${invoiceDate}`);
+            if (Number.isFinite(total) && total > 0) summaryParts.push(`${t('montant', 'importe')}: ${total.toFixed(2)}`);
+            if (iban) summaryParts.push(`IBAN: ${iban}`);
+            if (ibanConflictDetected) {
+                summaryParts.push(t('IBAN en conflit: annuaire fournisseur conservé', 'IBAN en conflicto: se conserva el del directorio'));
+            }
+
+            invoiceScanStatus.textContent = summaryParts.length
+                ? `${t('Scan facture: extraction terminée', 'Escaneo factura: extracción terminada')} · ${summaryParts.join(' · ')}`
+                : t('Scan facture: extraction terminée (vérifie les champs).', 'Escaneo factura: extracción terminada (verifica los campos).');
+        } catch (error) {
+            renderSupplierSuggestions([]);
+            invoiceReviewPanel.style.display = 'none';
+            invoiceScanStatus.textContent = `${t('Scan facture: échec', 'Escaneo factura: error')} (${String(error?.message || error)})`;
+        }
+    });
+
+    pasteSelectedTextBtn.addEventListener('click', async () => {
+        try {
+            const clipboardText = await navigator.clipboard.readText();
+            if (!clipboardText.trim()) {
+                invoiceScanStatus.textContent = t('Presse-papiers vide.', 'Portapapeles vacío.');
+                return;
+            }
+            const ok = applyClipboardTextToTarget(clipboardText);
+            invoiceScanStatus.textContent = ok
+                ? t('Texte collé dans le champ sélectionné.', 'Texto pegado en el campo seleccionado.')
+                : t('Texte incompatible avec ce champ (ex: montant).', 'Texto incompatible con este campo (ej: importe).');
+        } catch (error) {
+            invoiceScanStatus.textContent = `${t('Lecture presse-papiers impossible', 'No se puede leer el portapapeles')}: ${String(error?.message || error)}`;
+        }
+    });
+
+    runAltLlmBtn.addEventListener('click', async () => {
+        const provider = String(llmProviderSelect.value || '').trim();
+        const apiKey = sanitizeApiKey(llmApiKeyInput.value);
+        const model = String(llmModelInput.value || '').trim();
+        if (!provider || !apiKey || !model) {
+            invoiceScanStatus.textContent = t('Configure provider, API key et model.', 'Configura proveedor, clave API y modelo.');
+            return;
+        }
+
+        llmApiKeyInput.value = apiKey;
+
+        localStorage.setItem(MAINTENANCE_LLM_PROVIDER_STORAGE_KEY, provider);
+        localStorage.setItem(MAINTENANCE_LLM_API_KEY_STORAGE_KEY, apiKey);
+        localStorage.setItem(MAINTENANCE_LLM_MODEL_STORAGE_KEY, model);
+
+        const totalValue = toFiniteAmount(expenseTotalInput.value);
+        const prompt = buildAlternativeLlmPrompt({
+            supplierName: expenseSupplierInput.value,
+            invoiceDate: expenseDateInput.value,
+            iban: expenseSupplierIbanInput.value,
+            totalAmount: Number.isFinite(totalValue) ? totalValue : null,
+            currency: expenseCurrencyInput.value,
+            rawText: maintenanceLastScannedText
+        });
+
+        try {
+            invoiceScanStatus.textContent = t('Analyse IA en cours...', 'Análisis IA en curso...');
+            const analysis = await requestAlternativeLlmAnalysis({ provider, apiKey, model, prompt });
+            if (!analysis) {
+                invoiceScanStatus.textContent = t('IA: réponse vide.', 'IA: respuesta vacía.');
+                return;
+            }
+            expenseAiCommentInput.value = analysis;
+            invoiceScanStatus.textContent = t('Analyse IA injectée dans commentaire IA.', 'Análisis IA insertado en comentario IA.');
+        } catch (error) {
+            const errorMessage = String(error?.message || error);
+            const isQuotaError = /\b429\b/.test(errorMessage) || /quota|rate limit|too many requests/i.test(errorMessage);
+            if (isQuotaError) {
+                const amount = toFiniteAmount(expenseTotalInput.value);
+                const detectedLines = String(maintenanceLastScannedText || '')
+                    .split(/\r?\n/)
+                    .map(line => line.trim())
+                    .filter(Boolean)
+                    .slice(0, 30);
+                expenseAiCommentInput.value = buildExpensePreventionComment({
+                    supplierName: expenseSupplierInput.value,
+                    totalAmount: Number.isFinite(amount) ? amount : null,
+                    detectedLines
+                });
+                invoiceScanStatus.textContent = t(
+                    'Quota IA atteint: analyse locale de secours injectée dans commentaire IA.',
+                    'Cuota IA alcanzada: análisis local de respaldo insertado en comentario IA.'
+                );
+                return;
+            }
+            const readableError = formatAlternativeLlmRuntimeError(error, provider);
+            invoiceScanStatus.textContent = `${t('Échec analyse IA', 'Error análisis IA')}: ${readableError}`;
+        }
+    });
+
+    testAltLlmBtn.addEventListener('click', async () => {
+        const provider = String(llmProviderSelect.value || '').trim();
+        const apiKey = sanitizeApiKey(llmApiKeyInput.value);
+        const model = String(llmModelInput.value || '').trim();
+        if (!provider || !apiKey || !model) {
+            invoiceScanStatus.textContent = t('Configure provider, API key et model.', 'Configura proveedor, clave API y modelo.');
+            return;
+        }
+
+        llmApiKeyInput.value = apiKey;
+
+        localStorage.setItem(MAINTENANCE_LLM_PROVIDER_STORAGE_KEY, provider);
+        localStorage.setItem(MAINTENANCE_LLM_API_KEY_STORAGE_KEY, apiKey);
+        localStorage.setItem(MAINTENANCE_LLM_MODEL_STORAGE_KEY, model);
+
+        try {
+            invoiceScanStatus.textContent = t('Test connexion API en cours...', 'Prueba conexión API en curso...');
+            await testAlternativeLlmConnection({ provider, apiKey, model });
+            invoiceScanStatus.textContent = t('Connexion API OK ✅', 'Conexión API OK ✅');
+        } catch (error) {
+            const readableError = formatAlternativeLlmRuntimeError(error, provider);
+            invoiceScanStatus.textContent = `${t('Test API échoué', 'Prueba API fallida')}: ${readableError}`;
+        }
+    });
+
+    addExpenseBtn.addEventListener('click', () => {
+        const totalAmount = toFiniteAmount(expenseTotalInput.value);
+        if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
+            invoiceScanStatus.textContent = t('Renseigne un montant total valide.', 'Introduce un importe total válido.');
+            return;
+        }
+
+        const lines = parseExpenseLinesText(expenseLinesInput.value);
+        const entry = sanitizeMaintenanceExpense({
+            id: `expense-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            invoiceName: invoiceInput.files?.[0]?.name || '',
+            date: expenseDateInput.value || new Date().toISOString().slice(0, 10),
+            supplierName: expenseSupplierInput.value,
+            supplierIban: expenseSupplierIbanInput.value,
+            payer: expensePayerSelect.value,
+            paymentStatus: expensePaymentStatusSelect.value,
+            totalAmount,
+            currency: expenseCurrencyInput.value || 'EUR',
+            lines,
+            note: expenseNoteInput.value,
+            aiComment: expenseAiCommentInput.value,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        }, maintenanceExpenses.length);
+
+        maintenanceExpenses.unshift(entry);
+        persistMaintenanceExpenses();
+        renderMaintenanceExpenses();
+
+        expenseTotalInput.value = '';
+        expenseLinesInput.value = '';
+        expenseNoteInput.value = '';
+        expenseAiCommentInput.value = '';
+        invoiceInput.value = '';
+        maintenanceLastScannedText = '';
+        invoiceReviewPanel.style.display = 'none';
+        updateInvoicePreview(null);
+        renderSupplierSuggestions([]);
+        invoiceScanStatus.textContent = t('Dépense ajoutée.', 'Gasto añadido.');
+    });
+
+    addSupplierBtn.addEventListener('click', () => {
+        const name = String(supplierNameInput.value || '').trim();
+        if (!name) {
+            return;
+        }
+
+        const entry = sanitizeMaintenanceSupplier({
+            id: `supplier-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            name,
+            contact: supplierContactInput.value,
+            emergencyPhone: supplierPhoneInput.value,
+            iban: supplierIbanInput.value,
+            note: supplierNoteInput.value,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        }, maintenanceSuppliers.length);
+
+        const existingIndex = maintenanceSuppliers.findIndex(item => item.name.toLowerCase() === entry.name.toLowerCase());
+        if (existingIndex >= 0) {
+            maintenanceSuppliers[existingIndex] = entry;
+        } else {
+            maintenanceSuppliers.push(entry);
+        }
+
+        persistMaintenanceSuppliers();
+        renderMaintenanceSuppliers();
+
+        supplierNameInput.value = '';
+        supplierContactInput.value = '';
+        supplierPhoneInput.value = '';
+        supplierIbanInput.value = '';
+        supplierNoteInput.value = '';
     });
 }
 
@@ -4894,16 +6574,24 @@ document.addEventListener('DOMContentLoaded', async function() {
     const maintenanceTab = document.getElementById('maintenanceTab');
     const mapContainer = document.getElementById('map');
     const maintenanceMapPanel = document.getElementById('maintenanceMapPanel');
+    const maintenanceInvoicePreviewPanel = document.getElementById('maintenanceInvoicePreviewPanel');
 
     function setMaintenanceMapMode(enabled) {
+        const shouldShowMaintenanceCanvas = enabled && activeMaintenanceSubtab === 'tasks';
+        const shouldShowInvoicePreview = enabled && activeMaintenanceSubtab === 'expenses' && !!maintenanceInvoicePreviewUrl;
+        const shouldHideMap = shouldShowMaintenanceCanvas || shouldShowInvoicePreview;
+
         if (mapContainer) {
-            mapContainer.style.display = enabled ? 'none' : '';
+            mapContainer.style.display = shouldHideMap ? 'none' : '';
         }
         if (maintenanceMapPanel) {
-            maintenanceMapPanel.style.display = enabled ? 'block' : 'none';
+            maintenanceMapPanel.style.display = shouldShowMaintenanceCanvas ? 'block' : 'none';
+        }
+        if (maintenanceInvoicePreviewPanel) {
+            maintenanceInvoicePreviewPanel.style.display = shouldShowInvoicePreview ? 'block' : 'none';
         }
 
-        if (enabled) {
+        if (shouldShowMaintenanceCanvas) {
             renderMaintenanceBoard();
             return;
         }
@@ -4914,6 +6602,10 @@ document.addEventListener('DOMContentLoaded', async function() {
             }
         }, 80);
     }
+
+    window.addEventListener('ceibo:maintenance-subtab-changed', () => {
+        setMaintenanceMapMode(activeTabName === 'maintenance');
+    });
 
     function activateTab(tabName) {
         if (isAuthGateLocked() && tabName !== 'cloud') {
@@ -6782,7 +8474,7 @@ function updateCloudDataSourceStatus(sourceLabel, routeCount = null, photoCount 
     const safeSourceLocalized = sourceLabelMap[safeSource] || safeSource;
     const routesLabel = Number.isFinite(routeCount) ? routeCount : getSavedRoutes().length;
     const photosLabel = Number.isFinite(photoCount) ? photoCount : waypointPhotoEntries.length;
-    status.textContent = `${t('Données routes/photos/maintenance', 'Datos rutas/fotos/mantenimiento')}: ${safeSourceLocalized} · ${t('routes', 'rutas')}: ${routesLabel} · ${t('photos', 'fotos')}: ${photosLabel} · ${t('schémas', 'esquemas')}: ${maintenanceBoards.length}`;
+    status.textContent = `${t('Données routes/photos/maintenance', 'Datos rutas/fotos/mantenimiento')}: ${safeSourceLocalized} · ${t('routes', 'rutas')}: ${routesLabel} · ${t('photos', 'fotos')}: ${photosLabel} · ${t('schémas', 'esquemas')}: ${maintenanceBoards.length} · ${t('dépenses', 'gastos')}: ${maintenanceExpenses.length} · ${t('fournisseurs', 'proveedores')}: ${maintenanceSuppliers.length}`;
 }
 
 function formatCloudError(error) {
@@ -6859,6 +8551,8 @@ async function pullRoutesFromCloud() {
     let rawRoutes = [];
     let rawWaypointPhotos = null;
     let rawMaintenanceBoards = null;
+    let rawMaintenanceExpenses = null;
+    let rawMaintenanceSuppliers = null;
     let rawNavLogEntries = null;
     let rawEngineLogEntries = null;
 
@@ -6868,6 +8562,8 @@ async function pullRoutesFromCloud() {
         rawRoutes = Array.isArray(rawPayload.routes) ? rawPayload.routes : [];
         rawWaypointPhotos = Array.isArray(rawPayload.waypointPhotos) ? rawPayload.waypointPhotos : [];
         rawMaintenanceBoards = Array.isArray(rawPayload.maintenanceBoards) ? rawPayload.maintenanceBoards : null;
+        rawMaintenanceExpenses = Array.isArray(rawPayload.maintenanceExpenses) ? rawPayload.maintenanceExpenses : null;
+        rawMaintenanceSuppliers = Array.isArray(rawPayload.maintenanceSuppliers) ? rawPayload.maintenanceSuppliers : null;
         rawNavLogEntries = Array.isArray(rawPayload.navLogEntries) ? rawPayload.navLogEntries : [];
         rawEngineLogEntries = Array.isArray(rawPayload.engineLogEntries) ? rawPayload.engineLogEntries : [];
     }
@@ -6881,6 +8577,14 @@ async function pullRoutesFromCloud() {
 
     if (Array.isArray(rawMaintenanceBoards)) {
         setMaintenanceBoards(rawMaintenanceBoards, { persistLocal: true, refreshUi: true, syncCloud: false });
+    }
+
+    if (Array.isArray(rawMaintenanceExpenses)) {
+        setMaintenanceExpenses(rawMaintenanceExpenses, { persistLocal: true, refreshUi: true, syncCloud: false });
+    }
+
+    if (Array.isArray(rawMaintenanceSuppliers)) {
+        setMaintenanceSuppliers(rawMaintenanceSuppliers, { persistLocal: true, refreshUi: true, syncCloud: false });
     }
 
     if (Array.isArray(rawNavLogEntries)) {
@@ -6903,10 +8607,12 @@ async function pullRoutesFromCloud() {
 async function pushRoutesToCloud() {
     if (!isCloudReady()) return false;
     const payload = {
-        version: 4,
+        version: 5,
         routes: getSavedRoutes(),
         waypointPhotos: waypointPhotoEntries,
         maintenanceBoards,
+        maintenanceExpenses,
+        maintenanceSuppliers,
         navLogEntries,
         engineLogEntries
     };
