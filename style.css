@@ -42,6 +42,38 @@ body {
     white-space: nowrap;
 }
 
+.lang-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.lang-btn {
+    width: auto;
+    margin-top: 0;
+    padding: 6px 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(143, 231, 255, 0.55);
+    background: rgba(16, 34, 58, 0.95);
+    color: #8fe7ff;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0.3px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.lang-btn:hover {
+    background: rgba(23, 49, 82, 0.98);
+    border-color: rgba(143, 231, 255, 0.85);
+}
+
+.lang-btn.active {
+    background: rgba(255, 154, 58, 0.95);
+    border-color: rgba(255, 154, 58, 0.95);
+    color: #1d1206;
+}
+
 #helpFab {
     position: static;
     display: inline-flex;
@@ -607,13 +639,24 @@ button:focus-visible {
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.12);
     font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+    overflow-x: auto;
+}
+
+#windSpeedLegend > strong {
+    flex: 0 0 auto;
 }
 
 .wind-legend-row {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-top: 6px;
+    margin-top: 0;
+    flex: 0 0 auto;
 }
 
 .wind-legend-swatch {

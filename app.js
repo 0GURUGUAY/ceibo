@@ -104,6 +104,7 @@ const overpassEndpointCooldownUntil = new Map();
 let overpassPreferredEndpoint = OVERPASS_URLS[0];
 const MAP_STYLE_STORAGE_KEY = 'ceiboMapStyle';
 const MAP_VIEW_STORAGE_KEY = 'ceiboMapView';
+const APP_LANGUAGE_STORAGE_KEY = 'ceiboAppLanguage';
 const TRANSPARENT_TILE_DATA_URI = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
 const OWM_TILE_APPID_STORAGE_KEY = 'ceiboOwmTileAppId';
 const STRONG_WAVE_THRESHOLD_M = 1.8;
@@ -123,6 +124,7 @@ const AUTO_WP_MAX_INTERMEDIATE = 24;
 const AUTO_WEATHER_SPLIT_MAX_HOURS = 2;
 const AUTO_WEATHER_SPLIT_MAX_SUBSEGMENTS = 8;
 let autoWpMinSpacingNm = null;
+let currentLanguage = 'fr';
 
 let landGeometry = null;
 
@@ -179,6 +181,270 @@ function isAuthRequiredRuntime() {
     }
 }
 
+function normalizeLanguage(language) {
+    return String(language || '').toLowerCase() === 'es' ? 'es' : 'fr';
+}
+
+function t(frText, esText) {
+    return currentLanguage === 'es' ? esText : frText;
+}
+
+function getCurrentLocale() {
+    return currentLanguage === 'es' ? 'es-ES' : 'fr-FR';
+}
+
+function setElementText(selector, value) {
+    const node = document.querySelector(selector);
+    if (!node || typeof value !== 'string') return;
+    node.textContent = value;
+}
+
+function setElementPlaceholder(selector, value) {
+    const node = document.querySelector(selector);
+    if (!node || typeof value !== 'string') return;
+    node.placeholder = value;
+}
+
+function updateLanguageButtonsUi() {
+    const frBtn = document.getElementById('langFrBtn');
+    const esBtn = document.getElementById('langEsBtn');
+    if (frBtn) frBtn.classList.toggle('active', currentLanguage === 'fr');
+    if (esBtn) esBtn.classList.toggle('active', currentLanguage === 'es');
+}
+
+function applyLanguageToUi() {
+    document.documentElement.lang = currentLanguage;
+
+    setElementText('#appTitle', t('CEIBO Router Cloud version', 'CEIBO Router Cloud versión'));
+    setElementText('#cloudTabBtn', t('Cloud', 'Nube'));
+    setElementText('#routesTabBtn', t('Routes', 'Rutas'));
+    setElementText('#routingTabBtn', t('Routage', 'Navegación'));
+    setElementText('#navLogTabBtn', t('Journal nav', 'Diario nav'));
+    setElementText('#engineTabBtn', t('Moteur', 'Motor'));
+    setElementText('#weatherTabBtn', t('Météo', 'Meteo'));
+    setElementText('#arrivalTabBtn', t('Arrivée', 'Llegada'));
+    setElementText('#waypointTabBtn', t('Waypoint', 'Waypoint'));
+
+    setElementText('label[for="routeNameInput"]', t('Nom de la route:', 'Nombre de la ruta:'));
+    setElementPlaceholder('#routeNameInput', t('Nom de la route', 'Nombre de la ruta'));
+    setElementText('#saveRouteBtn', t('Sauvegarder', 'Guardar'));
+    setElementText('#exportRouteBtn', t('Exporter', 'Exportar'));
+    setElementText('#exportRouteGpxBtn', t('Exporter GPX', 'Exportar GPX'));
+    setElementText('#resetBtn', t('Reset', 'Reiniciar'));
+    setElementText('#reverseRouteBtn', t('Route retour', 'Ruta retorno'));
+    setElementText('#exportVoyagePdfBtn', t('Exporter rapport PDF', 'Exportar informe PDF'));
+    setElementText('label[for="savedRoutesSelect"]', t('Routes sauvegardées:', 'Rutas guardadas:'));
+    setElementText('#loadRouteBtn', t('Charger', 'Cargar'));
+    setElementText('#deleteRouteBtn', t('Supprimer', 'Eliminar'));
+    setElementText('#measureClearBtn', t('Effacer mesure', 'Borrar medición'));
+    setElementText('label[for="importRouteInput"]', t('Importer (JSON / GPX):', 'Importar (JSON / GPX):'));
+
+    setElementText('#computeBtn', t('Calculer', 'Calcular'));
+    setElementText('#deleteSelectedWpBtn', t('Supprimer WP', 'Eliminar WP'));
+    setElementText('#recenterBtn', t('Recentrer route', 'Centrar ruta'));
+    setElementText('#suggestDepartureBtn', t('Conseiller départ météo (≤ 20 kn)', 'Sugerir salida meteo (≤ 20 kn)'));
+    setElementText('#suggestAiRoutesBtn', t('Proposer routes IA (safe / perf)', 'Proponer rutas IA (safe / perf)'));
+    setElementText('label[for="departureDateTimeInput"]', t('Départ (date + heure):', 'Salida (fecha + hora):'));
+    setElementText('label[for="tackingTimeInput"]', t('Temps du bord (min):', 'Tiempo de bordo (min):'));
+    setElementText('label[for="sailModeSelect"]', t('Mode voiles:', 'Modo velas:'));
+    setElementText('label[for="autoWpSpacingInput"]', t('Contournement côte:', 'Rodeo costa:'));
+    setElementText('label[for="forecastWindowDaysSelect"]', t('Fenêtre analyse:', 'Ventana análisis:'));
+    setElementText('#departureSuggestionInfo', t('Suggestion départ: en attente', 'Sugerencia salida: en espera'));
+    setElementText('#aiRouteSuggestionInfo', t('Routes IA: en attente', 'Rutas IA: en espera'));
+
+    setElementText('#tackingTimeInput option[value="0.25"]', t('15 minutes', '15 minutos'));
+    setElementText('#tackingTimeInput option[value="0.33"]', t('20 minutes', '20 minutos'));
+    setElementText('#tackingTimeInput option[value="0.5"]', t('30 minutes', '30 minutos'));
+    setElementText('#tackingTimeInput option[value="0.75"]', t('45 minutes', '45 minutos'));
+    setElementText('#tackingTimeInput option[value="1"]', t('1 heure', '1 hora'));
+    setElementText('#tackingTimeInput option[value="1.5"]', t('1.5 heures', '1.5 horas'));
+    setElementText('#tackingTimeInput option[value="2"]', t('2 heures', '2 horas'));
+    setElementText('#sailModeSelect option[value="prudent"]', t('Prudent', 'Prudente'));
+    setElementText('#sailModeSelect option[value="auto"]', t('Auto', 'Auto'));
+    setElementText('#sailModeSelect option[value="performance"]', t('Performance', 'Rendimiento'));
+    setElementText('#autoWpSpacingInput option[value="off"]', t('Désactivé', 'Desactivado'));
+    setElementText('#forecastWindowDaysSelect option[value="2"]', t('2 jours', '2 días'));
+    setElementText('#forecastWindowDaysSelect option[value="3"]', t('3 jours', '3 días'));
+    setElementText('#forecastWindowDaysSelect option[value="5"]', t('5 jours', '5 días'));
+    setElementText('#forecastWindowDaysSelect option[value="7"]', t('7 jours', '7 días'));
+    setElementPlaceholder('#watchCrewInput', t('Ex: Max + Ana', 'Ej: Max + Ana'));
+    setElementPlaceholder('#watchHeadingInput', t('Ex: 235', 'Ej: 235'));
+    setElementPlaceholder('#watchWindDirInput', t('Ex: 260', 'Ej: 260'));
+    setElementPlaceholder('#watchWindSpeedInput', t('Ex: 16.5', 'Ej: 16.5'));
+    setElementPlaceholder('#watchSailConfigInput', t('Ex: GV 1 ris + génois', 'Ej: Mayor 1 rizo + génova'));
+    setElementPlaceholder('#watchBarometerInput', t('Ex: 1014.8', 'Ej: 1014.8'));
+    setElementPlaceholder('#watchLogNmInput', t('Ex: 842.3', 'Ej: 842.3'));
+    setElementPlaceholder('#watchEventsInput', t('Changement de voile, prise de ris, trafic, sécurité, etc.', 'Cambio de vela, rizo, tráfico, seguridad, etc.'));
+    setElementPlaceholder('#engineHoursInput', t('Ex: 1250.4', 'Ej: 1250.4'));
+    setElementPlaceholder('#fuelAddedInput', t('Ex: 35', 'Ej: 35'));
+    setElementPlaceholder('#engineLogNoteInput', t('Maintenance, bruit, filtre, etc.', 'Mantenimiento, ruido, filtro, etc.'));
+    setElementPlaceholder('#owmApiKeyInput', t('Ta clé OWM', 'Tu clave OWM'));
+    setElementPlaceholder('#waypointPlaceNameInput', t('Ex: Cala Blanca', 'Ej: Cala Blanca'));
+    setElementPlaceholder('#waypointCommentInput', t("Ex: Bon abri par vent d'ouest, tenue correcte", 'Ej: Buen abrigo con viento oeste, agarre correcto'));
+    setElementPlaceholder('#waypointBottomTypeInput', t('Ex: sable, vase, herbiers', 'Ej: arena, fango, praderas'));
+
+    setElementText('#waypointRatingInput option[value="1"]', '1 / 5');
+    setElementText('#waypointRatingInput option[value="2"]', '2 / 5');
+    setElementText('#waypointRatingInput option[value="3"]', '3 / 5');
+    setElementText('#waypointRatingInput option[value="4"]', '4 / 5');
+    setElementText('#waypointRatingInput option[value="5"]', '5 / 5');
+    setElementText('#waypointCleanlinessInput option[value="1"]', '1 / 5');
+    setElementText('#waypointCleanlinessInput option[value="2"]', '2 / 5');
+    setElementText('#waypointCleanlinessInput option[value="3"]', '3 / 5');
+    setElementText('#waypointCleanlinessInput option[value="4"]', '4 / 5');
+    setElementText('#waypointCleanlinessInput option[value="5"]', '5 / 5');
+    setElementText('#waypointDepthInput option[value="5"]', '5 m');
+    setElementText('#waypointDepthInput option[value="10"]', '10 m');
+    setElementText('#waypointDepthInput option[value="15"]', '15 m');
+    setElementText('#waypointDepthInput option[value="20"]', '20 m');
+    setElementText('#waypointDepthInput option[value="25"]', '25 m');
+    setElementText('#waypointDepthInput option[value="30"]', '30 m');
+
+    setElementText('#cloudRefreshBtn', t('Rafraîchir cloud', 'Actualizar nube'));
+    const cloudTitles = document.querySelectorAll('.cloud-config-title');
+    if (cloudTitles[0]) cloudTitles[0].textContent = t('V5 · Base de données partagée', 'V5 · Base de datos compartida');
+    if (cloudTitles[1]) cloudTitles[1].textContent = t('Compte utilisateur (Email + mot de passe)', 'Cuenta de usuario (Email + contraseña)');
+    setElementPlaceholder('#cloudEmailInput', t('Email utilisateur', 'Email usuario'));
+    setElementPlaceholder('#cloudUserPasswordInput', t('Mot de passe utilisateur', 'Contraseña usuario'));
+    setElementText('#cloudEmailSignInBtn', t('Se connecter email', 'Conectar email'));
+    setElementText('#cloudEmailSignUpBtn', t('Créer compte', 'Crear cuenta'));
+    setElementText('#cloudSignOutBtn', t('Se déconnecter', 'Desconectar'));
+    setElementText('#cloudAuthStatus', t('Utilisateur: non connecté', 'Usuario: no conectado'));
+    setElementText('#cloudStatus', t('Mode local (pas de cloud configuré)', 'Modo local (nube no configurada)'));
+    setElementText('#cloudDataSourceStatus', t('Données routes/photos: en attente', 'Datos rutas/fotos: en espera'));
+    setElementText('#cloudAutoSyncInfo', t('Routes + photos waypoint: synchronisation cloud automatique.', 'Rutas + fotos waypoint: sincronización nube automática.'));
+
+    setElementText('#startNavLogBtn', t('Démarrer log GPS', 'Iniciar log GPS'));
+    setElementText('#stopNavLogBtn', t('Arrêter log GPS', 'Detener log GPS'));
+    setElementText('#requestMotionPermissionBtn', t('Activer capteur inclinaison', 'Activar sensor inclinación'));
+    setElementText('#clearNavLogBtn', t('Effacer journal nav', 'Borrar diario nav'));
+    setElementText('#addManualNavLogBtn', t('Ajouter entrée jour de bord', 'Añadir entrada de bitácora'));
+    setElementText('#navLogStatus', t('Journal navigation: en attente', 'Diario navegación: en espera'));
+    setElementText('label[for="watchTimeInput"]', t('Heure du quart:', 'Hora de guardia:'));
+    setElementText('label[for="watchCrewInput"]', t('Équipage / quart:', 'Tripulación / guardia:'));
+    setElementText('label[for="watchHeadingInput"]', t('Cap compas (°):', 'Rumbo compás (°):'));
+    setElementText('label[for="watchWindDirInput"]', t('Vent direction (°):', 'Viento dirección (°):'));
+    setElementText('label[for="watchWindSpeedInput"]', t('Vent force (kn):', 'Viento fuerza (kn):'));
+    setElementText('label[for="watchSeaStateInput"]', t('État de mer:', 'Estado de mar:'));
+    setElementText('label[for="watchSailConfigInput"]', t('Voilure:', 'Velamen:'));
+    setElementText('label[for="watchBarometerInput"]', t('Baromètre (hPa):', 'Barómetro (hPa):'));
+    setElementText('label[for="watchLogNmInput"]', t('Loch total (NM):', 'Corredera total (NM):'));
+    setElementText('label[for="watchEventsInput"]', t('Événements / manœuvres:', 'Eventos / maniobras:'));
+    setElementText('#watchSeaStateInput option[value="calme"]', t('Calme', 'Calma'));
+    setElementText('#watchSeaStateInput option[value="peu agitée"]', t('Peu agitée', 'Poco agitada'));
+    setElementText('#watchSeaStateInput option[value="agitée"]', t('Agitée', 'Agitada'));
+    setElementText('#watchSeaStateInput option[value="forte"]', t('Forte', 'Fuerte'));
+    setElementText('#navLogTab label[style*="Entrées navigation"]', t('Entrées navigation:', 'Entradas navegación:'));
+
+    setElementText('#saveEngineLogBtn', t('Ajouter entrée moteur', 'Añadir entrada motor'));
+    setElementText('#clearEngineLogBtn', t('Effacer livre moteur', 'Borrar libro motor'));
+    setElementText('label[for="engineHoursInput"]', t('Compteur moteur (h):', 'Contador motor (h):'));
+    setElementText('label[for="fuelAddedInput"]', t('Carburant ajouté (L):', 'Combustible añadido (L):'));
+    setElementText('label[for="engineLogNoteInput"]', t('Note:', 'Nota:'));
+    setElementText('#engineTab label[style*="Historique moteur"]', t('Historique moteur:', 'Historial motor:'));
+
+    setElementText('#placeWeatherPointerBtn', t('Placer pointeur météo', 'Colocar puntero meteo'));
+    setElementText('#useMapCenterWeatherBtn', t('Centre carte → pointeur', 'Centro mapa → puntero'));
+    setElementText('#refreshWeatherOutlookBtn', t('Actualiser météo', 'Actualizar meteo'));
+    setElementText('#testOwmApiKeyBtn', t('Tester clé OWM', 'Probar clave OWM'));
+    setElementText('#saveOwmApiKeyBtn', t('Enregistrer clé OWM', 'Guardar clave OWM'));
+    setElementText('#clearOwmApiKeyBtn', t('Supprimer clé OWM', 'Borrar clave OWM'));
+    setElementText('#toggleWeatherApiConfigBtn', t('Afficher API météo', 'Mostrar API meteo'));
+    setElementText('#owmApiKeyStatus', t('Clé OWM: non testée', 'Clave OWM: no probada'));
+    setElementText('#weatherApiConfigSummary', t('API météo connectée.', 'API meteo conectada.'));
+    setElementText('#weatherOutlookStatus', t('Météo: en attente', 'Meteo: en espera'));
+
+    setElementText('#analyzeArrivalBtn', t('Conseiller mouillage à l\'arrivée', 'Sugerir fondeo a la llegada'));
+    setElementText('#arrivalSummary', t('Analyse mouillage: en attente', 'Análisis fondeo: en espera'));
+    setElementText('#nearbyRestaurantsLabel', t('Restaurants proches:', 'Restaurantes cercanos:'));
+    setElementText('#nearbyShopsLabel', t('Magasins / courses:', 'Tiendas / compras:'));
+    setElementText('label[for="waypointPhotoInput"]', t('Photo mouillage:', 'Foto fondeo:'));
+    setElementText('#saveWaypointPhotoBtn', t('Ajouter ce waypoint photo', 'Añadir este waypoint foto'));
+    setElementText('#cancelWaypointPhotoEditBtn', t('Annuler modification', 'Cancelar edición'));
+    setElementText('#waypointQuickCaptureBtn', t('📷 Prendre photo (WP auto)', '📷 Tomar foto (WP auto)'));
+    setElementText('#waypointPhotoStatus', t("Coordonnées: en attente d'une photo", 'Coordenadas: esperando una foto'));
+    setElementText('#waypointGoogleMapLink', t('Ouvrir dans Google Maps', 'Abrir en Google Maps'));
+    setElementText('label[for="waypointPlaceNameInput"]', t('Nom du lieu:', 'Nombre del lugar:'));
+    setElementText('label[for="waypointCommentInput"]', t('Commentaire:', 'Comentario:'));
+    setElementText('label[for="waypointRatingInput"]', t('Note globale:', 'Nota global:'));
+    setElementText('label[for="waypointCleanlinessInput"]', t('Propreté:', 'Limpieza:'));
+    setElementText('#waypointTab .waypoint-protection-item > label', t('Protection (rose des vents):', 'Protección (rosa de vientos):'));
+    setElementText('label[for="waypointDepthInput"]', t('Profondeur:', 'Profundidad:'));
+    setElementText('label[for="waypointBottomTypeInput"]', t('Type de fond:', 'Tipo de fondo:'));
+    setElementText('#waypointSavedAnchoragesLabel', t('Mouillages enregistrés:', 'Fondeos guardados:'));
+
+    const creator = document.querySelector('.creator-credit');
+    if (creator) creator.textContent = t('Programme créé par Max Patissier', 'Programa creado por Max Patissier');
+
+    const helpFab = document.getElementById('helpFab');
+    if (helpFab) {
+        helpFab.title = t('Aide', 'Ayuda');
+        helpFab.textContent = `❓ ${t('AIDE', 'AYUDA')}`;
+    }
+
+    updateSelectedWaypointInfo();
+    updateMeasureInfo();
+    setMeasureMode(measureModeEnabled);
+    refreshBaseLayerControlLanguage();
+    updateLanguageButtonsUi();
+}
+
+function getLayerControlLabels() {
+    return {
+        standard: t('Standard', 'Estándar'),
+        satellite: t('Satellite', 'Satélite'),
+        marineDepth: t('Maritime · Profondeurs', 'Marítimo · Profundidades'),
+        marineHazard: t('Maritime · Dangers', 'Marítimo · Peligros'),
+        isobars: t('Météo · Isobares (lignes · clé OWM)', 'Meteo · Isobaras (líneas · clave OWM)')
+    };
+}
+
+function refreshBaseLayerControlLanguage() {
+    if (!map || !baseLayerControl) return;
+
+    const labels = getLayerControlLabels();
+    map.removeControl(baseLayerControl);
+
+    baseLayerControl = L.control.layers(
+        {
+            [labels.standard]: standardTileLayer,
+            [labels.satellite]: satelliteTileLayer
+        },
+        {
+            [labels.marineDepth]: marineDepthLayer,
+            [labels.marineHazard]: marineHazardLayer,
+            [labels.isobars]: isobarLayer
+        },
+        { position: 'topright', collapsed: false }
+    ).addTo(map);
+}
+
+function setLanguage(language, options = {}) {
+    const { persist = true } = options;
+    currentLanguage = normalizeLanguage(language);
+    if (persist) {
+        localStorage.setItem(APP_LANGUAGE_STORAGE_KEY, currentLanguage);
+    }
+    applyLanguageToUi();
+}
+
+function initializeLanguageSwitcher() {
+    const frBtn = document.getElementById('langFrBtn');
+    const esBtn = document.getElementById('langEsBtn');
+
+    const storedLanguage = normalizeLanguage(localStorage.getItem(APP_LANGUAGE_STORAGE_KEY));
+    currentLanguage = storedLanguage;
+
+    if (frBtn) {
+        frBtn.addEventListener('click', () => setLanguage('fr'));
+    }
+    if (esBtn) {
+        esBtn.addEventListener('click', () => setLanguage('es'));
+    }
+
+    applyLanguageToUi();
+}
+
 function isAuthGateLocked() {
     return isAuthRequiredRuntime() && !cloudAuthUser;
 }
@@ -230,7 +496,7 @@ async function applyAuthGateState({ clearWhenLocked = true } = {}) {
             protectedDataLoaded = false;
         }
 
-        setCloudStatus('Accès verrouillé: authentifie-toi (email/mot de passe).', true);
+        setCloudStatus(t('Accès verrouillé: authentifie-toi (email/mot de passe).', 'Acceso bloqueado: autentícate (email/contraseña).'), true);
         return;
     }
 
@@ -262,7 +528,7 @@ async function applyAuthGateState({ clearWhenLocked = true } = {}) {
         try {
             const routes = await pullRoutesFromCloud();
             refreshSavedList();
-            setCloudStatus(`Cloud connecté · ${routes.length} route(s) partagée(s)`);
+            setCloudStatus(t(`Cloud connecté · ${routes.length} route(s) partagée(s)`, `Nube conectada · ${routes.length} ruta(s) compartida(s)`));
             updateCloudDataSourceStatus('cloud', routes.length, waypointPhotoEntries.length);
         } catch (error) {
             const localRoutes = loadRoutesFromLocalStorage();
@@ -362,7 +628,7 @@ function createIsobarOverlayLayer(appId) {
             isobarGroup.removeLayer(contoursLegacy);
         }
 
-        setCloudStatus('Isobares lignes indisponibles (OWM timeout).', true);
+        setCloudStatus(t('Isobares lignes indisponibles (OWM timeout).', 'Isobaras de líneas no disponibles (timeout OWM).'), true);
     });
 
     contoursLegacy.on('tileload', () => {
@@ -375,7 +641,7 @@ function createIsobarOverlayLayer(appId) {
 async function testOpenWeatherApiKey(appId) {
     const cleanedKey = String(appId || '').trim();
     if (!cleanedKey) {
-        return { ok: false, message: 'Clé vide.' };
+        return { ok: false, message: t('Clé vide.', 'Clave vacía.') };
     }
 
     const controller = new AbortController();
@@ -394,22 +660,22 @@ async function testOpenWeatherApiKey(appId) {
         }
 
         if (response.ok) {
-            return { ok: true, message: 'Clé valide (API OpenWeatherMap accessible).' };
+            return { ok: true, message: t('Clé valide (API OpenWeatherMap accessible).', 'Clave válida (API OpenWeatherMap accesible).') };
         }
 
         const apiMessage = String(payload?.message || '').trim();
         return {
             ok: false,
             message: apiMessage
-                ? `Clé invalide (${response.status}): ${apiMessage}`
-                : `Clé invalide (${response.status}).`
+                ? `${t('Clé invalide', 'Clave inválida')} (${response.status}): ${apiMessage}`
+                : `${t('Clé invalide', 'Clave inválida')} (${response.status}).`
         };
     } catch (error) {
         clearTimeout(timeout);
         if (error?.name === 'AbortError') {
-            return { ok: false, message: 'Timeout: test API trop long.' };
+            return { ok: false, message: t('Timeout: test API trop long.', 'Timeout: prueba API demasiado larga.') };
         }
-        return { ok: false, message: 'Erreur réseau pendant le test API.' };
+        return { ok: false, message: t('Erreur réseau pendant le test API.', 'Error de red durante la prueba API.') };
     }
 }
 
@@ -879,13 +1145,13 @@ function setWaypointPhotoEditMode(entry) {
 
     if (!entry) {
         editingWaypointPhotoId = null;
-        if (saveBtn) saveBtn.textContent = 'Ajouter ce waypoint photo';
+        if (saveBtn) saveBtn.textContent = t('Ajouter ce waypoint photo', 'Añadir este waypoint foto');
         if (cancelBtn) cancelBtn.style.display = 'none';
         return;
     }
 
     editingWaypointPhotoId = entry.id;
-    if (saveBtn) saveBtn.textContent = 'Mettre à jour ce waypoint photo';
+    if (saveBtn) saveBtn.textContent = t('Mettre à jour ce waypoint photo', 'Actualizar este waypoint foto');
     if (cancelBtn) cancelBtn.style.display = 'block';
 }
 
@@ -1043,17 +1309,17 @@ async function imageFileToCompressedDataUrl(file, maxSide = 720, quality = 0.68)
 }
 
 function buildWaypointPhotoPopupContent(entry, weatherHtml = '') {
-    const title = entry.placeName ? escapeHtml(entry.placeName) : 'Mouillage noté';
+    const title = entry.placeName ? escapeHtml(entry.placeName) : t('Mouillage noté', 'Fondeo valorado');
     const comment = entry.comment ? `<div style="margin-top:6px;">${escapeHtml(entry.comment)}</div>` : '';
-    const bottom = entry.bottomType ? `<div>Fond: ${escapeHtml(entry.bottomType)}</div>` : '';
+    const bottom = entry.bottomType ? `<div>${t('Fond', 'Fondo')}: ${escapeHtml(entry.bottomType)}</div>` : '';
     const image = entry.imageDataUrl
-        ? `<img src="${entry.imageDataUrl}" alt="Photo mouillage" style="margin-top:6px; width:100%; max-width:180px; border-radius:8px;">`
+        ? `<img src="${entry.imageDataUrl}" alt="${t('Photo mouillage', 'Foto fondeo')}" style="margin-top:6px; width:100%; max-width:180px; border-radius:8px;">`
         : '';
 
     return `<strong>${title}</strong><br>` +
         `${entry.lat.toFixed(5)}, ${entry.lng.toFixed(5)}<br>` +
-        `Global: ${starsLabel(entry.rating)}<br>` +
-        `Propreté: ${starsLabel(entry.cleanliness)} · Protection: ${escapeHtml(formatProtectionList(entry.protection))} · Profondeur: ${entry.depthMeters} m` +
+        `${t('Global', 'Global')}: ${starsLabel(entry.rating)}<br>` +
+        `${t('Propreté', 'Limpieza')}: ${starsLabel(entry.cleanliness)} · ${t('Protection', 'Protección')}: ${escapeHtml(formatProtectionList(entry.protection))} · ${t('Profondeur', 'Profundidad')}: ${entry.depthMeters} m` +
         `${bottom}` +
         `${comment}` +
         `${weatherHtml}` +
@@ -1063,17 +1329,17 @@ function buildWaypointPhotoPopupContent(entry, weatherHtml = '') {
 async function enrichWaypointPhotoPopupWithCurrentWeather(marker, entry) {
     if (!marker || !entry) return;
 
-    const loadingWeatherHtml = '<div style="margin-top:6px;"><strong>Météo actuelle</strong><br>Chargement...</div>';
+    const loadingWeatherHtml = `<div style="margin-top:6px;"><strong>${t('Météo actuelle', 'Meteo actual')}</strong><br>${t('Chargement...', 'Cargando...')}</div>`;
     marker.setPopupContent(buildWaypointPhotoPopupContent(entry, loadingWeatherHtml));
 
     try {
         const weather = await getCurrentWeatherAtWaypoint(entry.lat, entry.lng);
         const nowLabel = formatWeekdayHourUtc(new Date());
         const weatherLine = formatWeatherTooltipContent(weather, nowLabel).replace('<strong>Météo</strong><br>', '');
-        const weatherHtml = `<div style="margin-top:6px;"><strong>Météo actuelle</strong><br>${weatherLine}</div>`;
+        const weatherHtml = `<div style="margin-top:6px;"><strong>${t('Météo actuelle', 'Meteo actual')}</strong><br>${weatherLine}</div>`;
         marker.setPopupContent(buildWaypointPhotoPopupContent(entry, weatherHtml));
     } catch (error) {
-        const weatherHtml = '<div style="margin-top:6px;"><strong>Météo actuelle</strong><br>Indisponible</div>';
+        const weatherHtml = `<div style="margin-top:6px;"><strong>${t('Météo actuelle', 'Meteo actual')}</strong><br>${t('Indisponible', 'No disponible')}</div>`;
         marker.setPopupContent(buildWaypointPhotoPopupContent(entry, weatherHtml));
     }
 }
@@ -1169,28 +1435,28 @@ function renderWaypointPhotoList() {
     if (!container) return;
 
     if (!waypointPhotoEntries.length) {
-        container.innerHTML = '<div class="arrival-list__item">Aucun mouillage enregistré.</div>';
+        container.innerHTML = `<div class="arrival-list__item">${t('Aucun mouillage enregistré.', 'No hay fondeos guardados.')}</div>`;
         return;
     }
 
     container.innerHTML = waypointPhotoEntries.map(entry => {
-        const title = entry.placeName ? escapeHtml(entry.placeName) : 'Mouillage sans nom';
-        const bottom = entry.bottomType ? `<div>Fond: ${escapeHtml(entry.bottomType)}</div>` : '';
+        const title = entry.placeName ? escapeHtml(entry.placeName) : t('Mouillage sans nom', 'Fondeo sin nombre');
+        const bottom = entry.bottomType ? `<div>${t('Fond', 'Fondo')}: ${escapeHtml(entry.bottomType)}</div>` : '';
         const comment = entry.comment ? `<div style="margin-top:4px;">${escapeHtml(entry.comment)}</div>` : '';
-        const image = entry.imageDataUrl ? `<img class="waypoint-photo-card__img" src="${entry.imageDataUrl}" alt="Photo mouillage">` : '';
+        const image = entry.imageDataUrl ? `<img class="waypoint-photo-card__img" src="${entry.imageDataUrl}" alt="${t('Photo mouillage', 'Foto fondeo')}">` : '';
 
         return `<div class="waypoint-photo-card">
             <div><strong>${title}</strong></div>
             <div><strong>${starsLabel(entry.rating)}</strong> · ${entry.lat.toFixed(4)}, ${entry.lng.toFixed(4)}</div>
-            <div>Propreté ${starsLabel(entry.cleanliness)} · Protection ${escapeHtml(formatProtectionList(entry.protection))} · Profondeur ${entry.depthMeters} m</div>
+            <div>${t('Propreté', 'Limpieza')} ${starsLabel(entry.cleanliness)} · ${t('Protection', 'Protección')} ${escapeHtml(formatProtectionList(entry.protection))} · ${t('Profondeur', 'Profundidad')} ${entry.depthMeters} m</div>
             ${bottom}
             ${comment}
             ${image}
             <div class="button-row">
-                <button type="button" class="js-waypoint-photo-go" data-id="${escapeHtml(entry.id)}" style="flex:1;">Y aller</button>
-                <button type="button" class="js-waypoint-photo-center" data-id="${escapeHtml(entry.id)}" style="flex:1;">Voir sur carte</button>
-                <button type="button" class="js-waypoint-photo-edit" data-id="${escapeHtml(entry.id)}" style="flex:1;">Modifier</button>
-                <button type="button" class="js-waypoint-photo-delete" data-id="${escapeHtml(entry.id)}" style="flex:1;">Supprimer</button>
+                <button type="button" class="js-waypoint-photo-go" data-id="${escapeHtml(entry.id)}" style="flex:1;">${t('Y aller', 'Ir')}</button>
+                <button type="button" class="js-waypoint-photo-center" data-id="${escapeHtml(entry.id)}" style="flex:1;">${t('Voir sur carte', 'Ver en mapa')}</button>
+                <button type="button" class="js-waypoint-photo-edit" data-id="${escapeHtml(entry.id)}" style="flex:1;">${t('Modifier', 'Editar')}</button>
+                <button type="button" class="js-waypoint-photo-delete" data-id="${escapeHtml(entry.id)}" style="flex:1;">${t('Supprimer', 'Eliminar')}</button>
             </div>
         </div>`;
     }).join('');
@@ -1244,7 +1510,7 @@ async function handleWaypointPhotoInputChange(event) {
     }
 
     if (!file.type.startsWith('image/')) {
-        if (status) status.textContent = 'Ce fichier n\'est pas une image.';
+        if (status) status.textContent = t('Ce fichier n\'est pas une image.', 'Este archivo no es una imagen.');
         pendingWaypointPhotoDraft = null;
         return;
     }
@@ -1257,7 +1523,7 @@ async function handleWaypointPhotoInputChange(event) {
     waypointPhotoInputProcessing = true;
 
     try {
-        if (status) status.textContent = 'Lecture des coordonnées GPS...';
+        if (status) status.textContent = t('Lecture des coordonnées GPS...', 'Leyendo coordenadas GPS...');
 
         const coords = await extractGpsCoordinatesFromPhoto(file);
         if (!coords) {
@@ -1265,7 +1531,10 @@ async function handleWaypointPhotoInputChange(event) {
                 const entry = waypointPhotoEntries.find(item => item.id === editingWaypointPhotoId);
                 if (entry) {
                     pendingWaypointPhotoDraft = { file, lat: entry.lat, lng: entry.lng };
-                    if (status) status.textContent = `Pas de GPS dans la nouvelle photo: coordonnées conservées (${entry.lat.toFixed(5)}, ${entry.lng.toFixed(5)}).`;
+                    if (status) status.textContent = t(
+                        `Pas de GPS dans la nouvelle photo: coordonnées conservées (${entry.lat.toFixed(5)}, ${entry.lng.toFixed(5)}).`,
+                        `Sin GPS en la nueva foto: coordenadas conservadas (${entry.lat.toFixed(5)}, ${entry.lng.toFixed(5)}).`
+                    );
                     updateWaypointGoogleMapPreview(entry.lat, entry.lng);
                 }
             } else {
@@ -1283,7 +1552,10 @@ async function handleWaypointPhotoInputChange(event) {
                 }
 
                 if (status) {
-                    status.textContent = 'Pas de GPS EXIF: position manuelle activée sur la mini-carte (déplace le marqueur puis sauvegarde).';
+                    status.textContent = t(
+                        'Pas de GPS EXIF: position manuelle activée sur la mini-carte (déplace le marqueur puis sauvegarde).',
+                        'Sin GPS EXIF: posición manual activada en el mini-mapa (mueve el marcador y guarda).'
+                    );
                 }
             }
         } else {
@@ -1301,7 +1573,7 @@ async function handleWaypointPhotoInputChange(event) {
         }
     } catch (error) {
         pendingWaypointPhotoDraft = null;
-        if (status) status.textContent = 'Erreur de lecture image. Essaie une autre photo (JPG/PNG).';
+        if (status) status.textContent = t('Erreur de lecture image. Essaie une autre photo (JPG/PNG).', 'Error al leer la imagen. Prueba otra foto (JPG/PNG).');
     } finally {
         waypointPhotoInputProcessing = false;
     }
@@ -1315,16 +1587,16 @@ async function handleQuickWaypointCaptureChange(event) {
 
     try {
         if (!file.type.startsWith('image/')) {
-            if (status) status.textContent = 'Ce fichier n\'est pas une image.';
+            if (status) status.textContent = t('Ce fichier n\'est pas une image.', 'Este archivo no es una imagen.');
             return;
         }
 
-        if (status) status.textContent = 'Photo rapide: lecture GPS...';
+        if (status) status.textContent = t('Photo rapide: lecture GPS...', 'Foto rápida: leyendo GPS...');
 
         const coords = await extractGpsCoordinatesFromPhoto(file);
         if (!coords) {
-            if (status) status.textContent = 'Photo rapide: GPS EXIF introuvable (WP auto non créé).';
-            alert('La photo ne contient pas de coordonnées GPS. Utilise le mode manuel pour positionner le waypoint.');
+            if (status) status.textContent = t('Photo rapide: GPS EXIF introuvable (WP auto non créé).', 'Foto rápida: GPS EXIF no encontrado (WP auto no creado).');
+            alert(t('La photo ne contient pas de coordonnées GPS. Utilise le mode manuel pour positionner le waypoint.', 'La foto no contiene coordenadas GPS. Usa el modo manual para posicionar el waypoint.'));
             return;
         }
 
@@ -1347,7 +1619,7 @@ async function handleQuickWaypointCaptureChange(event) {
         });
 
         if (!entry) {
-            if (status) status.textContent = 'Photo rapide: coordonnées invalides.';
+            if (status) status.textContent = t('Photo rapide: coordonnées invalides.', 'Foto rápida: coordenadas inválidas.');
             return;
         }
 
@@ -1355,7 +1627,7 @@ async function handleQuickWaypointCaptureChange(event) {
         const persisted = persistWaypointPhotoEntries();
         if (!persisted) {
             waypointPhotoEntries.shift();
-            alert('Stockage saturé: impossible d\'enregistrer cette photo.');
+            alert(t('Stockage saturé: impossible d\'enregistrer cette photo.', 'Almacenamiento lleno: no se puede guardar esta foto.'));
             return;
         }
 
@@ -1366,10 +1638,13 @@ async function handleQuickWaypointCaptureChange(event) {
         }
 
         if (status) {
-            status.textContent = `Photo rapide: WP créé automatiquement (${entry.lat.toFixed(5)}, ${entry.lng.toFixed(5)}).`;
+            status.textContent = t(
+                `Photo rapide: WP créé automatiquement (${entry.lat.toFixed(5)}, ${entry.lng.toFixed(5)}).`,
+                `Foto rápida: WP creado automáticamente (${entry.lat.toFixed(5)}, ${entry.lng.toFixed(5)}).`
+            );
         }
     } catch (_error) {
-        if (status) status.textContent = 'Photo rapide: échec de création du WP.';
+        if (status) status.textContent = t('Photo rapide: échec de création du WP.', 'Foto rápida: fallo al crear el WP.');
     } finally {
         if (event?.target) event.target.value = '';
     }
@@ -1377,7 +1652,7 @@ async function handleQuickWaypointCaptureChange(event) {
 
 async function saveWaypointPhotoEntry() {
     if (waypointPhotoInputProcessing) {
-        alert('Photo en cours de traitement, attends 1-2 secondes puis réessaie.');
+        alert(t('Photo en cours de traitement, attends 1-2 secondes puis réessaie.', 'Foto en procesamiento, espera 1-2 segundos y vuelve a intentarlo.'));
         return;
     }
 
@@ -1385,7 +1660,7 @@ async function saveWaypointPhotoEntry() {
         && waypointPhotoEntries.findIndex(entry => entry.id === editingWaypointPhotoId) !== -1;
 
     if (!pendingWaypointPhotoDraft?.file && !isEdit) {
-        alert('Choisis une photo avec coordonnées GPS intégrées.');
+        alert(t('Choisis une photo avec coordonnées GPS intégrées.', 'Elige una foto con coordenadas GPS integradas.'));
         return;
     }
 
@@ -1402,7 +1677,7 @@ async function saveWaypointPhotoEntry() {
         const editIndex = waypointPhotoEntries.findIndex(entry => entry.id === editingWaypointPhotoId);
         const current = waypointPhotoEntries[editIndex];
         if (!current) {
-            alert('Waypoint à modifier introuvable.');
+            alert(t('Waypoint à modifier introuvable.', 'No se encontró el waypoint a modificar.'));
             return;
         }
 
@@ -1431,19 +1706,19 @@ async function saveWaypointPhotoEntry() {
         const persisted = persistWaypointPhotoEntries();
         if (!persisted) {
             waypointPhotoEntries[editIndex] = previousEntry;
-            alert('Enregistrement impossible: stockage local saturé. Essaie une image plus légère ou supprime des anciennes photos.');
+            alert(t('Enregistrement impossible: stockage local saturé. Essaie une image plus légère ou supprime des anciennes photos.', 'No se puede guardar: almacenamiento local lleno. Prueba una imagen más ligera o elimina fotos antiguas.'));
             return;
         }
 
         renderWaypointPhotoList();
         syncWaypointPhotoMarkersInView();
         cancelWaypointPhotoEdit();
-        alert('Waypoint photo modifié.');
+        alert(t('Waypoint photo modifié.', 'Waypoint foto modificado.'));
         return;
     }
 
     if (!Number.isFinite(pendingWaypointPhotoDraft?.lat) || !Number.isFinite(pendingWaypointPhotoDraft?.lng)) {
-        alert('Coordonnées GPS manquantes pour ce waypoint photo.');
+        alert(t('Coordonnées GPS manquantes pour ce waypoint photo.', 'Faltan coordenadas GPS para este waypoint foto.'));
         return;
     }
 
@@ -1469,7 +1744,7 @@ async function saveWaypointPhotoEntry() {
     const persisted = persistWaypointPhotoEntries();
     if (!persisted) {
         waypointPhotoEntries.shift();
-        alert('Enregistrement impossible: stockage local saturé. Essaie une image plus légère ou supprime des anciennes photos.');
+        alert(t('Enregistrement impossible: stockage local saturé. Essaie une image plus légère ou supprime des anciennes photos.', 'No se puede guardar: almacenamiento local lleno. Prueba una imagen más ligera o elimina fotos antiguas.'));
         return;
     }
 
@@ -1478,9 +1753,9 @@ async function saveWaypointPhotoEntry() {
 
     resetWaypointPhotoFormValues();
     clearWaypointPhotoDraft();
-    alert('Waypoint photo enregistré.');
+    alert(t('Waypoint photo enregistré.', 'Waypoint foto guardado.'));
     } catch (error) {
-        alert('Impossible d\'enregistrer la photo. Essaie une image plus légère (JPG), puis recommence.');
+        alert(t('Impossible d\'enregistrer la photo. Essaie une image plus légère (JPG), puis recommence.', 'No se puede guardar la foto. Prueba una imagen más ligera (JPG) y vuelve a intentarlo.'));
     }
 }
 
@@ -1489,18 +1764,27 @@ function updateSelectedWaypointInfo() {
     if (!info) return;
 
     if (!Number.isInteger(selectedUserWaypointIndex) || selectedUserWaypointIndex < 0 || selectedUserWaypointIndex >= markers.length) {
-        info.textContent = 'WP sélectionné: aucun · clic sur WP pour sélectionner · clic droit pour supprimer';
+        info.textContent = t(
+            'WP sélectionné: aucun · clic sur WP pour sélectionner · clic droit pour supprimer',
+            'WP seleccionado: ninguno · clic en WP para seleccionar · clic derecho para eliminar'
+        );
         return;
     }
 
     const marker = markers[selectedUserWaypointIndex];
     const latlng = marker?.getLatLng?.();
     if (!latlng) {
-        info.textContent = 'WP sélectionné: aucun · clic sur WP pour sélectionner · clic droit pour supprimer';
+        info.textContent = t(
+            'WP sélectionné: aucun · clic sur WP pour sélectionner · clic droit pour supprimer',
+            'WP seleccionado: ninguno · clic en WP para seleccionar · clic derecho para eliminar'
+        );
         return;
     }
 
-    info.textContent = `WP sélectionné: ${selectedUserWaypointIndex + 1} (${latlng.lat.toFixed(4)}, ${latlng.lng.toFixed(4)})`;
+    info.textContent = t(
+        `WP sélectionné: ${selectedUserWaypointIndex + 1} (${latlng.lat.toFixed(4)}, ${latlng.lng.toFixed(4)})`,
+        `WP seleccionado: ${selectedUserWaypointIndex + 1} (${latlng.lat.toFixed(4)}, ${latlng.lng.toFixed(4)})`
+    );
 }
 
 function invalidateComputedRouteDisplay() {
@@ -1836,7 +2120,7 @@ function renderAnchorageRecommendations(recommendations) {
     if (!container) return;
 
     if (!Array.isArray(recommendations) || recommendations.length === 0) {
-        container.innerHTML = '<div class="arrival-card">Aucun mouillage recommandé trouvé.</div>';
+        container.innerHTML = `<div class="arrival-card">${t('Aucun mouillage recommandé trouvé.', 'No se encontró fondeo recomendado.')}</div>`;
         return;
     }
 
@@ -1849,8 +2133,8 @@ function renderAnchorageRecommendations(recommendations) {
                     <span>#${index + 1} ${escapeHtml(item.name)}</span>
                     <span>${item.distanceNm.toFixed(2)} nm</span>
                 </div>
-                <div>Vent ETA: ${wind} · Houle ETA: ${wave} · Confiance: ${escapeHtml(item.confidence)}</div>
-                <button type="button" class="apply-anchorage-btn" data-anch-index="${index}">Utiliser comme WP final</button>
+                <div>${t('Vent ETA', 'Viento ETA')}: ${wind} · ${t('Houle ETA', 'Oleaje ETA')}: ${wave} · ${t('Confiance', 'Confianza')}: ${escapeHtml(item.confidence)}</div>
+                <button type="button" class="apply-anchorage-btn" data-anch-index="${index}">${t('Utiliser comme WP final', 'Usar como WP final')}</button>
             </div>
         `;
     }).join('');
@@ -1867,7 +2151,7 @@ function renderAnchorageRecommendations(recommendations) {
 
 async function analyzeArrivalZone() {
     if (routePoints.length < 2) {
-        alert('Ajoute au moins 2 waypoints pour analyser la zone d\'arrivée.');
+        alert(t('Ajoute au moins 2 waypoints pour analyser la zone d\'arrivée.', 'Añade al menos 2 waypoints para analizar la zona de llegada.'));
         return;
     }
 
@@ -1875,9 +2159,9 @@ async function analyzeArrivalZone() {
     const summary = document.getElementById('arrivalSummary');
     if (button) {
         button.disabled = true;
-        button.textContent = 'Analyse en cours...';
+        button.textContent = t('Analyse en cours...', 'Análisis en curso...');
     }
-    if (summary) summary.textContent = 'Analyse mouillage: récupération des données...';
+    if (summary) summary.textContent = t('Analyse mouillage: récupération des données...', 'Análisis fondeo: recuperando datos...');
 
     clearArrivalPoiMarkers();
 
@@ -1896,22 +2180,22 @@ async function analyzeArrivalZone() {
         shops.forEach(item => addArrivalPoiMarker(item.lat, item.lon, item.name, 'shop'));
 
         renderAnchorageRecommendations(recommendations);
-        renderNearbyList('nearbyRestaurants', restaurants, 'Aucun restaurant proche trouvé');
-        renderNearbyList('nearbyShops', shops, 'Aucun magasin proche trouvé');
+        renderNearbyList('nearbyRestaurants', restaurants, t('Aucun restaurant proche trouvé', 'No se encontraron restaurantes cercanos'));
+        renderNearbyList('nearbyShops', shops, t('Aucun magasin proche trouvé', 'No se encontraron tiendas cercanas'));
 
         if (summary) {
             if (recommendations.length) {
-                summary.innerHTML = `<strong>Top mouillage:</strong> ${escapeHtml(recommendations[0].name)} · ${recommendations[0].distanceNm.toFixed(2)} nm de l'arrivée`;
+                summary.innerHTML = `<strong>${t('Top mouillage:', 'Mejor fondeo:')}</strong> ${escapeHtml(recommendations[0].name)} · ${recommendations[0].distanceNm.toFixed(2)} nm ${t('de l\'arrivée', 'de la llegada')}`;
             } else {
-                summary.textContent = 'Analyse mouillage: aucun mouillage adapté trouvé à proximité.';
+                summary.textContent = t('Analyse mouillage: aucun mouillage adapté trouvé à proximité.', 'Análisis fondeo: no se encontró un fondeo adecuado cerca.');
             }
         }
     } catch (_error) {
-        if (summary) summary.textContent = 'Analyse mouillage: erreur de récupération des données.';
+        if (summary) summary.textContent = t('Analyse mouillage: erreur de récupération des données.', 'Análisis fondeo: error al recuperar datos.');
     } finally {
         if (button) {
             button.disabled = false;
-            button.textContent = 'Conseiller mouillage à l\'arrivée';
+            button.textContent = t('Conseiller mouillage à l\'arrivée', 'Sugerir fondeo a la llegada');
         }
     }
 }
@@ -2084,7 +2368,7 @@ function renderDepartureSuggestion(result) {
 
     if (!result) {
         lastDepartureSuggestion = null;
-        container.textContent = 'Suggestion départ: aucune fenêtre météo favorable trouvée.';
+        container.textContent = t('Suggestion départ: aucune fenêtre météo favorable trouvée.', 'Sugerencia salida: no se encontró una ventana meteo favorable.');
         container.classList.remove('suggestion-clickable');
         return;
     }
@@ -2103,23 +2387,23 @@ function renderDepartureSuggestion(result) {
         : 0;
 
     container.innerHTML =
-        `<strong>Départ conseillé:</strong> ${formatWeekdayHourUtc(result.departureDateTime)}<br>` +
-        `Arrivée estimée: ${formatWeekdayHourUtc(result.arrivalDateTime)} · ${formatDurationHours(result.totalTimeHours)}<br>` +
-        `Vent départ: ${depWind} · Vent arrivée: ${arrWind} · Vent min trajet: ${minWind}<br>` +
-        `Vent maxi trajet: ${maxWind} · Rafale maxi trajet: ${maxGust}<br>` +
-        `Moteur estimé: ${formatDurationHours(motorTime)} (${motorShare}%)`;
+        `<strong>${t('Départ conseillé', 'Salida recomendada')}:</strong> ${formatWeekdayHourUtc(result.departureDateTime)}<br>` +
+        `${t('Arrivée estimée', 'Llegada estimada')}: ${formatWeekdayHourUtc(result.arrivalDateTime)} · ${formatDurationHours(result.totalTimeHours)}<br>` +
+        `${t('Vent départ', 'Viento salida')}: ${depWind} · ${t('Vent arrivée', 'Viento llegada')}: ${arrWind} · ${t('Vent min trajet', 'Viento min trayecto')}: ${minWind}<br>` +
+        `${t('Vent maxi trajet', 'Viento máx trayecto')}: ${maxWind} · ${t('Rafale maxi trajet', 'Ráfaga máx trayecto')}: ${maxGust}<br>` +
+        `${t('Moteur estimé', 'Motor estimado')}: ${formatDurationHours(motorTime)} (${motorShare}%)`;
 }
 
 async function suggestBestDeparture() {
     if (routePoints.length < 2) {
-        alert('Ajoute au moins 2 waypoints pour analyser un départ.');
+        alert(t('Ajoute au moins 2 waypoints pour analyser un départ.', 'Añade al menos 2 waypoints para analizar una salida.'));
         return;
     }
 
     const button = document.getElementById('suggestDepartureBtn');
     if (button) {
         button.disabled = true;
-        button.textContent = 'Analyse météo...';
+        button.textContent = t('Analyse météo...', 'Análisis meteo...');
     }
 
     beginAiTrafficSession('Conseil départ météo');
@@ -2156,7 +2440,7 @@ async function suggestBestDeparture() {
             lastDepartureSuggestion = null;
             if (container) {
                 container.classList.remove('suggestion-clickable');
-                container.textContent = 'Suggestion départ: aucune fenêtre météo ≤ 20 kn trouvée.';
+                container.textContent = t('Suggestion départ: aucune fenêtre météo ≤ 20 kn trouvée.', 'Sugerencia salida: no se encontró ventana meteo ≤ 20 kn.');
             }
             endAiTrafficSession('Aucune fenêtre ≤ 20 kn');
             return;
@@ -2167,11 +2451,11 @@ async function suggestBestDeparture() {
         endAiTrafficSession('Suggestion départ terminée');
     } catch (_error) {
         endAiTrafficSession('Erreur pendant le calcul de suggestion');
-        alert('Impossible de calculer une suggestion de départ pour le moment.');
+        alert(t('Impossible de calculer une suggestion de départ pour le moment.', 'No se puede calcular una sugerencia de salida por ahora.'));
     } finally {
         if (button) {
             button.disabled = false;
-            button.textContent = 'Conseiller départ météo (≤ 20 kn)';
+            button.textContent = t('Conseiller départ météo (≤ 20 kn)', 'Sugerir salida meteo (≤ 20 kn)');
         }
     }
 }
@@ -2191,26 +2475,29 @@ function renderAiRouteCandidates(candidates) {
 
     if (!Array.isArray(candidates) || candidates.length === 0) {
         lastAiRouteCandidates = [];
-        info.textContent = 'Routes IA: aucune proposition disponible.';
+        info.textContent = t('Routes IA: aucune proposition disponible.', 'Rutas IA: ninguna propuesta disponible.');
         container.innerHTML = '';
         return;
     }
 
     lastAiRouteCandidates = candidates;
-    info.textContent = `Routes IA: ${candidates.length} proposition(s). Clique "Appliquer" pour charger un profil.`;
+    info.textContent = t(
+        `Routes IA: ${candidates.length} proposition(s). Clique "Appliquer" pour charger un profil.`,
+        `Rutas IA: ${candidates.length} propuesta(s). Haz clic en "Aplicar" para cargar un perfil.`
+    );
 
     container.innerHTML = candidates.map((item, index) => {
         const depWind = Number.isFinite(item?.departureWeather?.windSpeed) ? `${item.departureWeather.windSpeed.toFixed(1)} kn` : 'N/A';
         const maxWind = Number.isFinite(item?.maxWind) ? `${item.maxWind.toFixed(1)} kn` : 'N/A';
         const motor = Number.isFinite(item?.motorTimeHours) ? formatDurationHours(item.motorTimeHours) : 'N/A';
         const score = Number.isFinite(item?.score) ? item.score.toFixed(1) : 'N/A';
-        const routeVariant = item?.routeVariantLabel || 'Trajectoire standard';
+        const routeVariant = item?.routeVariantLabel || t('Trajectoire standard', 'Trayectoria estándar');
         return `<div class="ai-route-card"><strong>${escapeHtml(item.label)}</strong><br>` +
-            `Trajectoire: ${escapeHtml(routeVariant)} · Points: ${Number(item?.routePointCount || 0)}<br>` +
-            `Départ: ${formatWeekdayHourUtc(item.departureDateTime)} · Durée: ${formatDurationHours(item.totalTimeHours)}<br>` +
-            `Vent départ: ${depWind} · Vent max trajet: ${maxWind} · Moteur: ${motor}<br>` +
-            `Mode: ${escapeHtml(item.sailMode)} · Bord: ${Math.round(item.tackingTimeHours * 60)} min · Score: ${score}<br>` +
-            `<button type="button" class="apply-ai-route-btn" data-ai-route-index="${index}" style="margin-top:6px;">Appliquer ce profil</button></div>`;
+            `${t('Trajectoire', 'Trayectoria')}: ${escapeHtml(routeVariant)} · ${t('Points', 'Puntos')}: ${Number(item?.routePointCount || 0)}<br>` +
+            `${t('Départ', 'Salida')}: ${formatWeekdayHourUtc(item.departureDateTime)} · ${t('Durée', 'Duración')}: ${formatDurationHours(item.totalTimeHours)}<br>` +
+            `${t('Vent départ', 'Viento salida')}: ${depWind} · ${t('Vent max trajet', 'Viento máx trayecto')}: ${maxWind} · ${t('Moteur', 'Motor')}: ${motor}<br>` +
+            `${t('Mode', 'Modo')}: ${escapeHtml(item.sailMode)} · ${t('Bord', 'Bordo')}: ${Math.round(item.tackingTimeHours * 60)} min · Score: ${score}<br>` +
+            `<button type="button" class="apply-ai-route-btn" data-ai-route-index="${index}" style="margin-top:6px;">${t('Appliquer ce profil', 'Aplicar este perfil')}</button></div>`;
     }).join('');
 }
 
@@ -2273,8 +2560,11 @@ function applyAiRouteCandidate(index) {
 
     const info = document.getElementById('aiRouteSuggestionInfo');
     if (info) {
-        const routeVariant = candidate.routeVariantLabel || 'Trajectoire standard';
-        info.textContent = `Profil appliqué: ${candidate.label} · ${routeVariant}. Tu peux maintenant cliquer Calculer.`;
+        const routeVariant = candidate.routeVariantLabel || t('Trajectoire standard', 'Trayectoria estándar');
+        info.textContent = t(
+            `Profil appliqué: ${candidate.label} · ${routeVariant}. Tu peux maintenant cliquer Calculer.`,
+            `Perfil aplicado: ${candidate.label} · ${routeVariant}. Ahora puedes hacer clic en Calcular.`
+        );
     }
 }
 
@@ -2291,7 +2581,7 @@ function buildAiRouteVariants() {
 
     const variants = [
         {
-            routeVariantLabel: 'Route actuelle',
+            routeVariantLabel: t('Route actuelle', 'Ruta actual'),
             points: currentPath
         }
     ];
@@ -2307,17 +2597,17 @@ function buildAiRouteVariants() {
     const southDetour = movePoint(mid.lat, mid.lon, bearing - 90, detourNm);
 
     variants.push({
-        routeVariantLabel: 'Contournement nord',
+        routeVariantLabel: t('Contournement nord', 'Rodeo norte'),
         points: [start, { lat: northDetour.lat, lng: northDetour.lon }, end]
     });
     variants.push({
-        routeVariantLabel: 'Contournement sud',
+        routeVariantLabel: t('Contournement sud', 'Rodeo sur'),
         points: [start, { lat: southDetour.lat, lng: southDetour.lon }, end]
     });
 
     if (currentPath.length > 2) {
         variants.push({
-            routeVariantLabel: 'Directe départ-arrivée',
+            routeVariantLabel: t('Directe départ-arrivée', 'Directa salida-llegada'),
             points: [start, end]
         });
     }
@@ -2327,7 +2617,7 @@ function buildAiRouteVariants() {
 
 async function suggestAiRouteOptions() {
     if (routePoints.length < 2) {
-        alert('Ajoute au moins 2 waypoints pour analyser des routes IA.');
+        alert(t('Ajoute au moins 2 waypoints pour analyser des routes IA.', 'Añade al menos 2 waypoints para analizar rutas IA.'));
         return;
     }
 
@@ -2336,9 +2626,9 @@ async function suggestAiRouteOptions() {
 
     if (button) {
         button.disabled = true;
-        button.textContent = 'Calcul IA...';
+        button.textContent = t('Calcul IA...', 'Cálculo IA...');
     }
-    if (info) info.textContent = 'Routes IA: calcul en cours...';
+    if (info) info.textContent = t('Routes IA: calcul en cours...', 'Rutas IA: cálculo en curso...');
     beginAiTrafficSession('Routage IA multi-scénarios');
 
     const originalSailMode = sailMode;
@@ -2401,7 +2691,7 @@ async function suggestAiRouteOptions() {
         endAiTrafficSession('Routage IA terminé');
     } catch (_error) {
         renderAiRouteCandidates([]);
-        if (info) info.textContent = 'Routes IA: impossible de calculer des options pour le moment.';
+        if (info) info.textContent = t('Routes IA: impossible de calculer des options pour le moment.', 'Rutas IA: no se pueden calcular opciones por ahora.');
         endAiTrafficSession('Erreur pendant le routage IA');
     } finally {
         sailMode = originalSailMode;
@@ -2409,7 +2699,7 @@ async function suggestAiRouteOptions() {
         updateRoutingControlsUiFromState();
         if (button) {
             button.disabled = false;
-            button.textContent = 'Proposer routes IA (safe / perf)';
+            button.textContent = t('Proposer routes IA (safe / perf)', 'Proponer rutas IA (safe / perf)');
         }
     }
 }
@@ -2496,8 +2786,8 @@ function buildRouteVectorDataUrl(reportData) {
             ${waypointNodes}
             <circle cx="${start.x.toFixed(1)}" cy="${start.y.toFixed(1)}" r="6" fill="#37d67a" stroke="#ffffff" stroke-width="2"/>
             <circle cx="${end.x.toFixed(1)}" cy="${end.y.toFixed(1)}" r="6" fill="#ff5f6d" stroke="#ffffff" stroke-width="2"/>
-            <text x="${Math.min(width - 90, start.x + 10).toFixed(1)}" y="${Math.max(18, start.y - 10).toFixed(1)}" fill="#bde9ff" font-size="13" font-family="Arial">Départ</text>
-            <text x="${Math.min(width - 90, end.x + 10).toFixed(1)}" y="${Math.max(18, end.y - 10).toFixed(1)}" fill="#ffc8ce" font-size="13" font-family="Arial">Arrivée</text>
+            <text x="${Math.min(width - 90, start.x + 10).toFixed(1)}" y="${Math.max(18, start.y - 10).toFixed(1)}" fill="#bde9ff" font-size="13" font-family="Arial">${t('Départ', 'Salida')}</text>
+            <text x="${Math.min(width - 90, end.x + 10).toFixed(1)}" y="${Math.max(18, end.y - 10).toFixed(1)}" fill="#ffc8ce" font-size="13" font-family="Arial">${t('Arrivée', 'Llegada')}</text>
             <circle cx="${northX}" cy="${northY}" r="16" fill="#102434" stroke="#7fd8ff" stroke-width="1.2"/>
             <path d="M ${northX} ${northY - 10} L ${northX - 5} ${northY + 4} L ${northX} ${northY + 1} L ${northX + 5} ${northY + 4} Z" fill="#7fd8ff"/>
             <text x="${northX}" y="${northY + 13}" text-anchor="middle" fill="#d8f4ff" font-size="10" font-family="Arial" font-weight="700">N</text>
@@ -2560,7 +2850,7 @@ async function captureMapImageDataUrl() {
 
 function buildVoyageReportHtml(data, mapImageDataUrl, vectorImageDataUrl) {
     const metrics = data?.metrics || {};
-    const routeName = escapeHtml(data?.routeName || 'Route');
+    const routeName = escapeHtml(data?.routeName || t('Route', 'Ruta'));
     const computedAt = escapeHtml(formatUtcDateTime(data?.computedAt));
     const departure = escapeHtml(formatUtcDateTime(data?.departureIso));
     const arrival = escapeHtml(formatUtcDateTime(data?.arrivalIso));
@@ -2594,60 +2884,60 @@ function buildVoyageReportHtml(data, mapImageDataUrl, vectorImageDataUrl) {
     `).join('');
 
     const mapSection = mapImageDataUrl
-        ? `<img class="map-image" src="${mapImageDataUrl}" alt="Carte de navigation" />`
-        : '<div class="map-placeholder">Carte indisponible</div>';
+        ? `<img class="map-image" src="${mapImageDataUrl}" alt="${t('Carte de navigation', 'Mapa de navegación')}" />`
+        : `<div class="map-placeholder">${t('Carte indisponible', 'Mapa no disponible')}</div>`;
 
     const vectorSection = vectorImageDataUrl
-        ? `<img class="map-image" src="${vectorImageDataUrl}" alt="Tracé 2D" />`
-        : '<div class="map-placeholder">Tracé 2D indisponible</div>';
+        ? `<img class="map-image" src="${vectorImageDataUrl}" alt="${t('Tracé 2D', 'Trazado 2D')}" />`
+        : `<div class="map-placeholder">${t('Tracé 2D indisponible', 'Trazado 2D no disponible')}</div>`;
 
     return `
     <div class="pdf-report">
         <header class="hero">
             <div>
-                <h1>Carnet de Voyage</h1>
+                <h1>${t('Carnet de Voyage', 'Cuaderno de Viaje')}</h1>
                 <h2>${routeName}</h2>
-                <p>Généré le ${computedAt}</p>
+                <p>${t('Généré le', 'Generado el')} ${computedAt}</p>
             </div>
             <div class="hero-meta">
-                <div><strong>Départ</strong><span>${departure}</span></div>
-                <div><strong>Arrivée</strong><span>${arrival}</span></div>
-                <div><strong>Météo MAJ</strong><span>${weatherUpdatedAt}</span></div>
+                <div><strong>${t('Départ', 'Salida')}</strong><span>${departure}</span></div>
+                <div><strong>${t('Arrivée', 'Llegada')}</strong><span>${arrival}</span></div>
+                <div><strong>${t('Météo MAJ', 'Meteo ACT')}</strong><span>${weatherUpdatedAt}</span></div>
             </div>
         </header>
 
         <section class="cards">
-            <article><span>Distance</span><strong>${escapeHtml(metrics.totalDistanceNm)} nm</strong></article>
-            <article><span>Durée</span><strong>${escapeHtml(metrics.totalTimeLabel)}</strong></article>
-            <article><span>Segments</span><strong>${escapeHtml(metrics.segmentCount)}</strong></article>
-            <article><span>WP auto</span><strong>${escapeHtml(metrics.generatedWaypointCount)}</strong></article>
+            <article><span>${t('Distance', 'Distancia')}</span><strong>${escapeHtml(metrics.totalDistanceNm)} nm</strong></article>
+            <article><span>${t('Durée', 'Duración')}</span><strong>${escapeHtml(metrics.totalTimeLabel)}</strong></article>
+            <article><span>${t('Segments', 'Segmentos')}</span><strong>${escapeHtml(metrics.segmentCount)}</strong></article>
+            <article><span>${t('WP auto', 'WP auto')}</span><strong>${escapeHtml(metrics.generatedWaypointCount)}</strong></article>
         </section>
 
         <section>
-            <h3>Carte de navigation</h3>
+            <h3>${t('Carte de navigation', 'Mapa de navegación')}</h3>
             ${mapSection}
         </section>
 
         <section>
-            <h3>Tracé de navigation (2D)</h3>
+            <h3>${t('Tracé de navigation (2D)', 'Trazado de navegación (2D)')}</h3>
             ${vectorSection}
         </section>
 
         <section>
-            <h3>Segments</h3>
+            <h3>${t('Segments', 'Segmentos')}</h3>
             <table>
                 <thead>
-                    <tr><th>WP</th><th>Seg</th><th>Nom</th><th>Départ</th><th>Arrivée</th><th>Cap</th><th>Dist</th><th>Temps</th><th>Vit</th><th>Voiles</th></tr>
+                    <tr><th>WP</th><th>Seg</th><th>${t('Nom', 'Nombre')}</th><th>${t('Départ', 'Salida')}</th><th>${t('Arrivée', 'Llegada')}</th><th>${t('Cap', 'Rumbo')}</th><th>${t('Dist', 'Dist')}</th><th>${t('Temps', 'Tiempo')}</th><th>${t('Vit', 'Vel')}</th><th>${t('Voiles', 'Velas')}</th></tr>
                 </thead>
                 <tbody>${segmentRows}</tbody>
             </table>
         </section>
 
         <section>
-            <h3>Météo aux waypoints</h3>
+            <h3>${t('Météo aux waypoints', 'Meteo en waypoints')}</h3>
             <table>
                 <thead>
-                    <tr><th>WP</th><th>Passage</th><th>Vent</th><th>Dir</th><th>Pression</th><th>Houle</th><th>Résumé</th></tr>
+                    <tr><th>WP</th><th>${t('Passage', 'Paso')}</th><th>${t('Vent', 'Viento')}</th><th>${t('Dir', 'Dir')}</th><th>${t('Pression', 'Presión')}</th><th>${t('Houle', 'Oleaje')}</th><th>${t('Résumé', 'Resumen')}</th></tr>
                 </thead>
                 <tbody>${waypointRows}</tbody>
             </table>
@@ -2684,19 +2974,19 @@ function createReportStyles() {
 
 async function exportVoyagePdfReport() {
     if (!lastComputedReportData) {
-        alert('Calcule une route avant d\'exporter le rapport PDF.');
+        alert(t('Calcule une route avant d\'exporter le rapport PDF.', 'Calcula una ruta antes de exportar el informe PDF.'));
         return;
     }
 
     if (!window?.jspdf?.jsPDF) {
-        alert('jsPDF non disponible dans le navigateur.');
+        alert(t('jsPDF non disponible dans le navigateur.', 'jsPDF no disponible en el navegador.'));
         return;
     }
 
     const button = document.getElementById('exportVoyagePdfBtn');
     if (button) {
         button.disabled = true;
-        button.textContent = 'Génération PDF...';
+        button.textContent = t('Génération PDF...', 'Generación PDF...');
     }
 
     try {
@@ -2745,11 +3035,11 @@ async function exportVoyagePdfReport() {
         const dateTag = new Date().toISOString().slice(0, 10);
         pdf.save(`rapport_${safeName}_${dateTag}.pdf`);
     } catch (error) {
-        alert('Impossible de générer le PDF.');
+        alert(t('Impossible de générer le PDF.', 'No se puede generar el PDF.'));
     } finally {
         if (button) {
             button.disabled = false;
-            button.textContent = 'Exporter rapport PDF';
+            button.textContent = t('Exporter rapport PDF', 'Exportar informe PDF');
         }
     }
 }
@@ -2759,40 +3049,44 @@ function getSeaComfortLevel(weather) {
     const windSpeed = weather?.windSpeed;
 
     if (Number.isFinite(waveHeight)) {
-        if (waveHeight < 0.7) return 'Confort: calme';
-        if (waveHeight < 1.5) return 'Confort: modéré';
-        if (waveHeight < 2.5) return 'Confort: agité';
-        return 'Confort: difficile';
+        if (waveHeight < 0.7) return t('Confort: calme', 'Confort: calma');
+        if (waveHeight < 1.5) return t('Confort: modéré', 'Confort: moderado');
+        if (waveHeight < 2.5) return t('Confort: agité', 'Confort: agitado');
+        return t('Confort: difficile', 'Confort: difícil');
     }
 
     if (Number.isFinite(windSpeed)) {
-        if (windSpeed < 10) return 'Confort: calme';
-        if (windSpeed < 18) return 'Confort: modéré';
-        if (windSpeed < 25) return 'Confort: agité';
-        return 'Confort: difficile';
+        if (windSpeed < 10) return t('Confort: calme', 'Confort: calma');
+        if (windSpeed < 18) return t('Confort: modéré', 'Confort: moderado');
+        if (windSpeed < 25) return t('Confort: agité', 'Confort: agitado');
+        return t('Confort: difficile', 'Confort: difícil');
     }
 
-    return 'Confort: N/A';
+    return t('Confort: N/A', 'Confort: N/A');
 }
 
 function getSailRecommendation({ isMotorSegment, tws, twa, sailModeValue }) {
-    if (isMotorSegment) return 'Moteur';
+    if (isMotorSegment) return t('Moteur', 'Motor');
 
     const prudentOffset = sailModeValue === 'prudent' ? -2 : 0;
     const perfOffset = sailModeValue === 'performance' ? 2 : 0;
 
-    if (tws >= (22 + prudentOffset)) return 'GV 2 ris + trinquette';
+    if (tws >= (22 + prudentOffset)) return t('GV 2 ris + trinquette', 'Mayor 2 rizos + trinqueta');
     if (tws >= (16 + prudentOffset)) {
-        if (twa > 130 && sailModeValue === 'performance') return 'GV 1 ris + spi';
-        return 'GV 1 ris + génois réduit';
+        if (twa > 130 && sailModeValue === 'performance') return t('GV 1 ris + spi', 'Mayor 1 rizo + spi');
+        return t('GV 1 ris + génois réduit', 'Mayor 1 rizo + génova reducida');
     }
 
-    if (twa < 60) return sailModeValue === 'prudent' ? 'GV pleine + génois réduit' : 'GV pleine + génois';
-    if (twa < 115) return 'GV pleine + génois';
-    if (twa < 145) return sailModeValue === 'prudent' ? 'GV + génois tangonné' : 'GV + gennaker';
+    if (twa < 60) return sailModeValue === 'prudent'
+        ? t('GV pleine + génois réduit', 'Mayor completa + génova reducida')
+        : t('GV pleine + génois', 'Mayor completa + génova');
+    if (twa < 115) return t('GV pleine + génois', 'Mayor completa + génova');
+    if (twa < 145) return sailModeValue === 'prudent'
+        ? t('GV + génois tangonné', 'Mayor + génova tangonada')
+        : t('GV + gennaker', 'Mayor + gennaker');
 
-    if (sailModeValue === 'performance' && tws < (18 + perfOffset)) return 'GV + spi';
-    return 'GV + génois tangonné';
+    if (sailModeValue === 'performance' && tws < (18 + perfOffset)) return t('GV + spi', 'Mayor + spi');
+    return t('GV + génois tangonné', 'Mayor + génova tangonada');
 }
 
 function getSailPerformanceFactor({ isMotorSegment, sailModeValue, tws, twa, sailSetup }) {
@@ -2812,13 +3106,15 @@ function getSailPerformanceFactor({ isMotorSegment, sailModeValue, tws, twa, sai
 }
 
 function getSailComment({ sailSetup, sailModeValue, tws, twa, isMotorSegment }) {
-    if (isMotorSegment) return 'Vent faible (< 5 kn) : passage au moteur à 7 kn.';
+    if (isMotorSegment) return t('Vent faible (< 5 kn) : passage au moteur à 7 kn.', 'Viento flojo (< 5 kn): paso a motor a 7 kn.');
 
     const twaText = Number.isFinite(twa) ? `${Math.round(twa)}°` : 'N/A';
     const twsText = Number.isFinite(tws) ? `${tws.toFixed(1)} kn` : 'N/A';
-    const modeLabel = sailModeValue === 'prudent' ? 'Prudent' : (sailModeValue === 'performance' ? 'Performance' : 'Auto');
+    const modeLabel = sailModeValue === 'prudent'
+        ? t('Prudent', 'Prudente')
+        : (sailModeValue === 'performance' ? t('Performance', 'Rendimiento') : t('Auto', 'Auto'));
 
-    return `Mode ${modeLabel} · TWS ${twsText} · TWA ${twaText} → ${sailSetup}`;
+    return `${t('Mode', 'Modo')} ${modeLabel} · TWS ${twsText} · TWA ${twaText} → ${sailSetup}`;
 }
 
 async function ensureLandGeometryLoaded() {
@@ -3079,7 +3375,10 @@ function updateMeasureInfo() {
     const info = document.getElementById('measureInfo');
     if (!info) return;
     const total = getMeasureTotalNm(measurePoints);
-    info.textContent = `Mesure: ${total.toFixed(2)} nm`;
+    info.textContent = t(
+        `Mesure: ${total.toFixed(2)} nm`,
+        `Medición: ${total.toFixed(2)} nm`
+    );
 }
 
 function clearMeasureLabels() {
@@ -3171,7 +3470,10 @@ function setMeasureMode(enabled) {
 
     const btn = document.getElementById('measureToggleBtn');
     if (btn) {
-        btn.textContent = `Mesure NM: ${measureModeEnabled ? 'ON' : 'OFF'}`;
+        btn.textContent = t(
+            `Mesure NM: ${measureModeEnabled ? 'ON' : 'OFF'}`,
+            `Medición NM: ${measureModeEnabled ? 'ON' : 'OFF'}`
+        );
         btn.classList.toggle('active', measureModeEnabled);
     }
 
@@ -3242,7 +3544,7 @@ function createNauticalScaleControl() {
 function formatDateTimeFr(dateInput) {
     const dateObj = new Date(dateInput);
     if (Number.isNaN(dateObj.getTime())) return 'N/A';
-    return dateObj.toLocaleString('fr-FR', {
+    return dateObj.toLocaleString(getCurrentLocale(), {
         day: '2-digit',
         month: '2-digit',
         year: 'numeric',
@@ -3293,9 +3595,9 @@ function updateCloudAuthUi() {
 
     if (cloudAuthUser) {
         const label = cloudAuthUser.email || cloudAuthUser.user_metadata?.full_name || cloudAuthUser.id;
-        setCloudAuthStatus(`Utilisateur: connecté (${label})`);
+        setCloudAuthStatus(t(`Utilisateur: connecté (${label})`, `Usuario: conectado (${label})`));
     } else {
-        setCloudAuthStatus('Utilisateur: non connecté');
+        setCloudAuthStatus(t('Utilisateur: non connecté', 'Usuario: no conectado'));
     }
 
     if (emailSignInBtn) emailSignInBtn.disabled = !cloudClient || !!cloudAuthUser;
@@ -3374,9 +3676,9 @@ async function enforceCloudWhitelistForCurrentUser() {
             cloudAuthUser = null;
             updateCloudAuthUi();
             if (verdict.reason === 'not-listed') {
-                setCloudAuthStatus(`Utilisateur refusé: ${email} absent de ${CLOUD_ALLOWED_USERS_TABLE}`, true);
+                setCloudAuthStatus(t(`Utilisateur refusé: ${email} absent de ${CLOUD_ALLOWED_USERS_TABLE}`, `Usuario rechazado: ${email} ausente de ${CLOUD_ALLOWED_USERS_TABLE}`), true);
             } else {
-                setCloudAuthStatus(`Contrôle accès impossible: ${verdict.reason}`, true);
+                setCloudAuthStatus(t(`Contrôle accès impossible: ${verdict.reason}`, `Control de acceso imposible: ${verdict.reason}`), true);
             }
         }
     } catch (_error) {
@@ -3426,9 +3728,9 @@ function scheduleCloudLogbookPush() {
         if (!isCloudReady()) return;
         try {
             await pushRoutesToCloud();
-            setCloudStatus(`Cloud synchro auto · ${getSavedRoutes().length} route(s) · logs OK`);
+            setCloudStatus(t(`Cloud synchro auto · ${getSavedRoutes().length} route(s) · logs OK`, `Nube sincronización auto · ${getSavedRoutes().length} ruta(s) · logs OK`));
         } catch (error) {
-            setCloudStatus(`Synchro logs impossible: ${formatCloudError(error)}`, true);
+            setCloudStatus(t(`Synchro logs impossible: ${formatCloudError(error)}`, `Sincronización logs imposible: ${formatCloudError(error)}`), true);
         }
     }, CLOUD_LOGBOOK_PUSH_DEBOUNCE_MS);
 }
@@ -3440,7 +3742,7 @@ function saveNavLogEntries() {
 
 function formatNowTimeLabel() {
     const now = new Date();
-    return now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    return now.toLocaleTimeString(getCurrentLocale(), { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
 function renderAiTrafficEntries() {
@@ -3564,7 +3866,7 @@ function drawHeelSpeedChart() {
     if (!points.length) {
         context.fillStyle = '#9cb5c9';
         context.font = '12px Arial';
-        context.fillText('Aucune donnée inclinaison/vitesse', 50, 26);
+        context.fillText(t('Aucune donnée inclinaison/vitesse', 'Sin datos inclinación/velocidad'), 50, 26);
         return;
     }
 
@@ -3582,8 +3884,8 @@ function drawHeelSpeedChart() {
 
     context.fillStyle = '#9cb5c9';
     context.font = '11px Arial';
-    context.fillText(`Inclinaison max: ${maxHeel.toFixed(1)}°`, 40, height - 10);
-    context.fillText(`Vitesse max: ${maxSpeed.toFixed(1)} kn`, width - 160, 20);
+    context.fillText(t(`Inclinaison max: ${maxHeel.toFixed(1)}°`, `Inclinación máx: ${maxHeel.toFixed(1)}°`), 40, height - 10);
+    context.fillText(t(`Vitesse max: ${maxSpeed.toFixed(1)} kn`, `Velocidad máx: ${maxSpeed.toFixed(1)} kn`), width - 160, 20);
 }
 
 function renderNavLogList() {
@@ -3591,7 +3893,7 @@ function renderNavLogList() {
     if (!container) return;
 
     if (!Array.isArray(navLogEntries) || navLogEntries.length === 0) {
-        container.innerHTML = '<div class="log-card">Aucune entrée navigation pour le moment.</div>';
+        container.innerHTML = `<div class="log-card">${t('Aucune entrée navigation pour le moment.', 'No hay entradas de navegación por ahora.')}</div>`;
         drawHeelSpeedChart();
         return;
     }
@@ -3613,15 +3915,15 @@ function renderNavLogList() {
             const events = item?.events ? `<br><em>${escapeHtml(item.events)}</em>` : '';
             const positionLine = Number.isFinite(item?.lat) && Number.isFinite(item?.lng)
                 ? `Lat: ${Number(item.lat).toFixed(5)} · Lng: ${Number(item.lng).toFixed(5)}`
-                : 'Lat/Lng: N/A';
+                : t('Lat/Lng: N/A', 'Lat/Lng: N/A');
             const watchTime = item?.watchTimeIso ? formatDateTimeFr(item.watchTimeIso) : formatDateTimeFr(item?.timestamp);
 
             return `<div class="log-card"><strong>${watchTime}</strong><br>` +
-                `Quart: ${crew} · Source: ${escapeHtml(item?.source || 'manual')}<br>` +
+                `${t('Quart', 'Guardia')}: ${crew} · ${t('Source', 'Origen')}: ${escapeHtml(item?.source || t('manual', 'manual'))}<br>` +
                 `${positionLine}<br>` +
-                `Cap: ${heading} · Vent: ${windDir} / ${windSpeed} · Mer: ${escapeHtml(seaState)}<br>` +
-                `Voilure: ${sailConfig} · Baro: ${baro} · Loch: ${loch}<br>` +
-                `Vitesse: ${speed} · Inclinaison: ${heel}${events}</div>`;
+                `${t('Cap', 'Rumbo')}: ${heading} · ${t('Vent', 'Viento')}: ${windDir} / ${windSpeed} · ${t('Mer', 'Mar')}: ${escapeHtml(seaState)}<br>` +
+                `${t('Voilure', 'Velamen')}: ${sailConfig} · ${t('Baro', 'Baro')}: ${baro} · ${t('Loch', 'Corredera')}: ${loch}<br>` +
+                `${t('Vitesse', 'Velocidad')}: ${speed} · ${t('Inclinaison', 'Inclinación')}: ${heel}${events}</div>`;
         })
         .join('');
 
@@ -3674,7 +3976,7 @@ function addManualNavigationLogEntry() {
         ...manualData
     });
 
-    setNavLogStatus(`Entrée jour de bord ajoutée · ${navLogEntries.length} entrée(s)`);
+    setNavLogStatus(t(`Entrée jour de bord ajoutée · ${navLogEntries.length} entrée(s)`, `Entrada de bitácora añadida · ${navLogEntries.length} entrada(s)`));
 }
 
 function handleNavOrientation(event) {
@@ -3694,28 +3996,28 @@ async function requestMotionPermissionIfNeeded() {
         if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
             const permission = await DeviceOrientationEvent.requestPermission();
             if (permission !== 'granted') {
-                setNavLogStatus('Inclinaison refusée par iOS.', true);
+                setNavLogStatus(t('Inclinaison refusée par iOS.', 'Inclinación rechazada por iOS.'), true);
                 return false;
             }
         }
 
         ensureMotionListenerBound();
-        setNavLogStatus('Capteur inclinaison activé.');
+        setNavLogStatus(t('Capteur inclinaison activé.', 'Sensor de inclinación activado.'));
         return true;
     } catch (_error) {
-        setNavLogStatus('Impossible d’activer le capteur inclinaison.', true);
+        setNavLogStatus(t('Impossible d’activer le capteur inclinaison.', 'No se puede activar el sensor de inclinación.'), true);
         return false;
     }
 }
 
 function startNavigationLogging() {
     if (!navigator.geolocation) {
-        setNavLogStatus('GPS non disponible sur cet appareil.', true);
+        setNavLogStatus(t('GPS non disponible sur cet appareil.', 'GPS no disponible en este dispositivo.'), true);
         return;
     }
 
     if (navWatchId !== null) {
-        setNavLogStatus('Log GPS déjà actif.');
+        setNavLogStatus(t('Log GPS déjà actif.', 'Log GPS ya activo.'));
         return;
     }
 
@@ -3734,11 +4036,11 @@ function startNavigationLogging() {
                 source: 'gps-watch'
             });
 
-            setNavLogStatus(`Log GPS actif · ${navLogEntries.length} point(s)`);
+            setNavLogStatus(t(`Log GPS actif · ${navLogEntries.length} point(s)`, `Log GPS activo · ${navLogEntries.length} punto(s)`));
         },
         error => {
             const details = error?.message ? `: ${error.message}` : '';
-            setNavLogStatus(`Erreur GPS${details}`, true);
+            setNavLogStatus(t(`Erreur GPS${details}`, `Error GPS${details}`), true);
         },
         {
             enableHighAccuracy: true,
@@ -3753,7 +4055,7 @@ function stopNavigationLogging() {
         navigator.geolocation.clearWatch(navWatchId);
         navWatchId = null;
     }
-    setNavLogStatus(`Log GPS arrêté · ${navLogEntries.length} point(s) enregistrés.`);
+    setNavLogStatus(t(`Log GPS arrêté · ${navLogEntries.length} point(s) enregistrés.`, `Log GPS detenido · ${navLogEntries.length} punto(s) guardado(s).`));
 }
 
 function clearNavigationLogbook() {
@@ -3761,7 +4063,7 @@ function clearNavigationLogbook() {
     navLogEntries = [];
     saveNavLogEntries();
     renderNavLogList();
-    setNavLogStatus('Journal navigation effacé.');
+    setNavLogStatus(t('Journal navigation effacé.', 'Diario de navegación borrado.'));
 }
 
 function loadNavigationLogbook() {
@@ -3783,7 +4085,7 @@ function renderEngineLogList() {
     if (!container) return;
 
     if (!Array.isArray(engineLogEntries) || engineLogEntries.length === 0) {
-        container.innerHTML = '<div class="log-card">Aucune entrée moteur pour le moment.</div>';
+        container.innerHTML = `<div class="log-card">${t('Aucune entrée moteur pour le moment.', 'No hay entradas de motor por ahora.')}</div>`;
         return;
     }
 
@@ -3793,7 +4095,7 @@ function renderEngineLogList() {
         .map(entry => {
             const hours = Number.isFinite(entry?.hours) ? `${entry.hours.toFixed(1)} h` : 'N/A';
             const fuel = Number.isFinite(entry?.fuelAddedL) ? `${entry.fuelAddedL.toFixed(1)} L` : '0 L';
-            return `<div class="log-card"><strong>${formatDateTimeFr(entry?.timestamp)}</strong><br>Compteur: ${hours} · Carburant: ${fuel}<br>${escapeHtml(entry?.note || '')}</div>`;
+            return `<div class="log-card"><strong>${formatDateTimeFr(entry?.timestamp)}</strong><br>${t('Compteur', 'Contador')}: ${hours} · ${t('Carburant', 'Combustible')}: ${fuel}<br>${escapeHtml(entry?.note || '')}</div>`;
         })
         .join('');
 }
@@ -3808,7 +4110,7 @@ function addEngineLogEntryFromForm() {
     const note = String(noteInput?.value || '').trim();
 
     if (!Number.isFinite(hours)) {
-        alert('Renseigne le compteur moteur (heures).');
+        alert(t('Renseigne le compteur moteur (heures).', 'Introduce el contador motor (horas).'));
         return;
     }
 
@@ -3869,11 +4171,11 @@ function setWeatherPointerPlacementMode(enabled) {
 
     const status = document.getElementById('weatherOutlookStatus');
     if (status && weatherPointerPlacementMode) {
-        status.textContent = 'Météo: clique sur la carte pour placer le pointeur.';
+        status.textContent = t('Météo: clique sur la carte pour placer le pointeur.', 'Meteo: haz clic en el mapa para colocar el puntero.');
     }
 }
 
-function setWeatherFocusPoint(latlng, { refresh = true, sourceLabel = 'pointeur carte' } = {}) {
+function setWeatherFocusPoint(latlng, { refresh = true, sourceLabel = t('pointeur carte', 'puntero mapa') } = {}) {
     if (!Number.isFinite(latlng?.lat) || !Number.isFinite(latlng?.lng)) return;
 
     weatherFocusPoint = { lat: latlng.lat, lng: latlng.lng };
@@ -3887,7 +4189,7 @@ function setWeatherFocusPoint(latlng, { refresh = true, sourceLabel = 'pointeur 
 
     const status = document.getElementById('weatherOutlookStatus');
     if (status) {
-        status.textContent = `Météo: ${sourceLabel} (${weatherFocusPoint.lat.toFixed(4)}, ${weatherFocusPoint.lng.toFixed(4)})`;
+        status.textContent = `${t('Météo', 'Meteo')}: ${sourceLabel} (${weatherFocusPoint.lat.toFixed(4)}, ${weatherFocusPoint.lng.toFixed(4)})`;
     }
 
     if (refresh) {
@@ -3900,32 +4202,32 @@ function computeWeatherImpactLabel(weather) {
     const wave = Number(weather?.waveHeight);
 
     if ((Number.isFinite(wind) && wind > 24) || (Number.isFinite(wave) && wave > 2.3)) {
-        return { text: 'À risque', className: 'weather-card weather-card--risk' };
+        return { text: t('À risque', 'Con riesgo'), className: 'weather-card weather-card--risk' };
     }
     if ((Number.isFinite(wind) && wind > 18) || (Number.isFinite(wave) && wave > 1.6)) {
-        return { text: 'Modéré', className: 'weather-card' };
+        return { text: t('Modéré', 'Moderado'), className: 'weather-card' };
     }
-    return { text: 'Favorable', className: 'weather-card weather-card--ok' };
+    return { text: t('Favorable', 'Favorable'), className: 'weather-card weather-card--ok' };
 }
 
 function getWeatherReferenceCoordinates(forceMapCenter = false) {
     if (map && forceMapCenter) {
         const center = map.getCenter();
-        return { lat: center.lat, lng: center.lng, source: 'centre carte' };
+        return { lat: center.lat, lng: center.lng, source: t('centre carte', 'centro mapa') };
     }
 
     if (weatherFocusPoint && Number.isFinite(weatherFocusPoint.lat) && Number.isFinite(weatherFocusPoint.lng)) {
-        return { lat: weatherFocusPoint.lat, lng: weatherFocusPoint.lng, source: 'pointeur météo' };
+        return { lat: weatherFocusPoint.lat, lng: weatherFocusPoint.lng, source: t('pointeur météo', 'puntero meteo') };
     }
 
     if (routePoints.length > 0) {
         const last = routePoints[routePoints.length - 1];
-        return { lat: last.lat, lng: last.lng, source: 'dernier waypoint' };
+        return { lat: last.lat, lng: last.lng, source: t('dernier waypoint', 'último waypoint') };
     }
 
     if (map) {
         const center = map.getCenter();
-        return { lat: center.lat, lng: center.lng, source: 'centre carte' };
+        return { lat: center.lat, lng: center.lng, source: t('centre carte', 'centro mapa') };
     }
 
     return null;
@@ -3938,16 +4240,16 @@ async function refreshWeatherOutlook({ forceMapCenter = false } = {}) {
 
     const focus = getWeatherReferenceCoordinates(forceMapCenter);
     if (!focus) {
-        status.textContent = 'Météo: coordonnées indisponibles.';
+        status.textContent = t('Météo: coordonnées indisponibles.', 'Meteo: coordenadas no disponibles.');
         return;
     }
 
-    status.textContent = `Météo: chargement (${focus.source})...`;
+    status.textContent = `${t('Météo', 'Meteo')}: ${t('chargement', 'cargando')} (${focus.source})...`;
 
     try {
         if (forceMapCenter && map) {
             const center = map.getCenter();
-            setWeatherFocusPoint(center, { refresh: false, sourceLabel: 'centre carte' });
+            setWeatherFocusPoint(center, { refresh: false, sourceLabel: t('centre carte', 'centro mapa') });
         }
 
         const current = await getCurrentWeatherAtWaypoint(focus.lat, focus.lng);
@@ -3993,17 +4295,17 @@ async function refreshWeatherOutlook({ forceMapCenter = false } = {}) {
             const rain = Number.isFinite(entry.weather?.precipitation) ? `${entry.weather.precipitation.toFixed(1)} mm` : 'N/A';
             const temp = Number.isFinite(entry.weather?.temperature) ? `${entry.weather.temperature.toFixed(1)}°C` : 'N/A';
             const pressure = Number.isFinite(entry.weather?.pressure) ? `${entry.weather.pressure.toFixed(0)} hPa` : 'N/A';
-            return `<div class="${impact.className}"><strong>${entry.slot.date} · 12:00 UTC</strong><br>Impact nav: ${impact.text}<br>Temp: ${temp} · Pression: ${pressure}<br>Vent: ${wind} (${dir}) · Rafales: ${Number.isFinite(entry.weather?.windGust) ? `${entry.weather.windGust.toFixed(1)} kn` : 'N/A'}<br>Houle: ${wave} · Pluie: ${rain}</div>`;
+            return `<div class="${impact.className}"><strong>${entry.slot.date} · 12:00 UTC</strong><br>${t('Impact nav', 'Impacto nav')}: ${impact.text}<br>${t('Temp', 'Temp')}: ${temp} · ${t('Pression', 'Presión')}: ${pressure}<br>${t('Vent', 'Viento')}: ${wind} (${dir}) · ${t('Rafales', 'Ráfagas')}: ${Number.isFinite(entry.weather?.windGust) ? `${entry.weather.windGust.toFixed(1)} kn` : 'N/A'}<br>${t('Houle', 'Oleaje')}: ${wave} · ${t('Pluie', 'Lluvia')}: ${rain}</div>`;
         }).join('');
 
         list.innerHTML =
-            `<div class="${nowImpact.className}"><strong>Conditions actuelles</strong><br>Impact nav: ${nowImpact.text}<br>Temp: ${nowTemp} · Pression: ${nowPressure}<br>Vent: ${nowWind} · Rafales: ${nowGust}<br>Houle: ${nowWave}</div>` +
-            `<div class="weather-card"><strong>Évolution actuelle → J+3</strong><br>Température: ${tempEvolution}<br>Pression: ${pressureEvolution}</div>` +
+            `<div class="${nowImpact.className}"><strong>${t('Conditions actuelles', 'Condiciones actuales')}</strong><br>${t('Impact nav', 'Impacto nav')}: ${nowImpact.text}<br>${t('Temp', 'Temp')}: ${nowTemp} · ${t('Pression', 'Presión')}: ${nowPressure}<br>${t('Vent', 'Viento')}: ${nowWind} · ${t('Rafales', 'Ráfagas')}: ${nowGust}<br>${t('Houle', 'Oleaje')}: ${nowWave}</div>` +
+            `<div class="weather-card"><strong>${t('Évolution actuelle → J+3', 'Evolución actual → D+3')}</strong><br>${t('Température', 'Temperatura')}: ${tempEvolution}<br>${t('Pression', 'Presión')}: ${pressureEvolution}</div>` +
             forecastHtml;
 
-        status.textContent = `Météo: ${focus.source} (${focus.lat.toFixed(4)}, ${focus.lng.toFixed(4)})`;
+        status.textContent = `${t('Météo', 'Meteo')}: ${focus.source} (${focus.lat.toFixed(4)}, ${focus.lng.toFixed(4)})`;
     } catch (_error) {
-        status.textContent = 'Météo: impossible de récupérer les prévisions.';
+        status.textContent = t('Météo: impossible de récupérer les prévisions.', 'Meteo: no se pueden recuperar las previsiones.');
         list.innerHTML = '';
     }
 }
@@ -4018,6 +4320,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     const initialLng = savedMapView?.lng ?? 2.1734;
     const initialZoom = savedMapView?.zoom ?? 8;
     map = L.map('map').setView([initialLat, initialLng], initialZoom);
+    initializeLanguageSwitcher();
 
     standardTileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap',
@@ -4048,15 +4351,16 @@ document.addEventListener('DOMContentLoaded', async function() {
     const openWeatherTileAppId = getStoredOpenWeatherTileAppId();
     isobarLayer = createIsobarOverlayLayer(openWeatherTileAppId);
 
+    const layerLabels = getLayerControlLabels();
     baseLayerControl = L.control.layers(
         {
-            'Standard': standardTileLayer,
-            'Satellite': satelliteTileLayer
+            [layerLabels.standard]: standardTileLayer,
+            [layerLabels.satellite]: satelliteTileLayer
         },
         {
-            'Maritime · Profondeurs': marineDepthLayer,
-            'Maritime · Dangers': marineHazardLayer,
-            'Météo · Isobares (lignes · clé OWM)': isobarLayer
+            [layerLabels.marineDepth]: marineDepthLayer,
+            [layerLabels.marineHazard]: marineHazardLayer,
+            [layerLabels.isobars]: isobarLayer
         },
         { position: 'topright', collapsed: false }
     ).addTo(map);
@@ -4074,12 +4378,12 @@ document.addEventListener('DOMContentLoaded', async function() {
     // Setup event listeners after map is ready
     map.on('click', function(e) {
         if (isAuthGateLocked()) {
-            setCloudStatus('Accès verrouillé: authentifie-toi (email/mot de passe).', true);
+            setCloudStatus(t('Accès verrouillé: authentifie-toi (email/mot de passe).', 'Acceso bloqueado: autentícate (email/contraseña).'), true);
             return;
         }
 
         if (weatherPointerPlacementMode && activeTabName === 'weather') {
-            setWeatherFocusPoint(e.latlng, { refresh: true, sourceLabel: 'pointeur carte' });
+            setWeatherFocusPoint(e.latlng, { refresh: true, sourceLabel: t('pointeur carte', 'puntero mapa') });
             setWeatherPointerPlacementMode(false);
             return;
         }
@@ -4110,7 +4414,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     setMapStyle(savedStyle);
 
     map.on('baselayerchange', function(e) {
-        const style = e.name === 'Satellite' ? 'satellite' : 'standard';
+        const style = e.layer === satelliteTileLayer ? 'satellite' : 'standard';
         activeBaseLayer = style === 'satellite' ? satelliteTileLayer : standardTileLayer;
         localStorage.setItem(MAP_STYLE_STORAGE_KEY, style);
     });
@@ -4134,7 +4438,7 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     function activateTab(tabName) {
         if (isAuthGateLocked() && tabName !== 'cloud') {
-            setCloudStatus('Accès verrouillé: authentifie-toi (email/mot de passe).', true);
+            setCloudStatus(t('Accès verrouillé: authentifie-toi (email/mot de passe).', 'Acceso bloqueado: autentícate (email/contraseña).'), true);
             tabName = 'cloud';
         }
 
@@ -4340,7 +4644,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         useMapCenterWeatherBtn.addEventListener('click', () => {
             if (!map) return;
             const center = map.getCenter();
-            setWeatherFocusPoint(center, { refresh: true, sourceLabel: 'centre carte' });
+            setWeatherFocusPoint(center, { refresh: true, sourceLabel: t('centre carte', 'centro mapa') });
         });
     }
 
@@ -4371,7 +4675,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         }
         if (toggleWeatherApiConfigBtn) {
             toggleWeatherApiConfigBtn.style.display = showConfig ? '' : '';
-            toggleWeatherApiConfigBtn.textContent = showConfig ? 'Masquer API météo' : 'Afficher API météo';
+            toggleWeatherApiConfigBtn.textContent = showConfig ? t('Masquer API météo', 'Ocultar API meteo') : t('Afficher API météo', 'Mostrar API meteo');
         }
     }
 
@@ -4390,18 +4694,18 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     const storedOwmKey = getStoredOpenWeatherTileAppId();
     if (storedOwmKey) {
-        if (owmApiKeyStatus) owmApiKeyStatus.textContent = 'Clé OWM: validation en cours...';
+        if (owmApiKeyStatus) owmApiKeyStatus.textContent = t('Clé OWM: validation en cours...', 'Clave OWM: validación en curso...');
         testOpenWeatherApiKey(storedOwmKey).then(result => {
             if (owmApiKeyStatus) {
                 owmApiKeyStatus.textContent = result.ok
-                    ? `Clé OWM: ✅ ${result.message}`
-                    : `Clé OWM: ❌ ${result.message}`;
+                    ? `${t('Clé OWM', 'Clave OWM')}: ✅ ${result.message}`
+                    : `${t('Clé OWM', 'Clave OWM')}: ❌ ${result.message}`;
             }
             if (result.ok) {
-                setWeatherApiConfigVisibility(false, 'API météo connectée (isobares actives).');
+                setWeatherApiConfigVisibility(false, t('API météo connectée (isobares actives).', 'API meteo conectada (isobaras activas).'));
             }
         }).catch(() => {
-            if (owmApiKeyStatus) owmApiKeyStatus.textContent = 'Clé OWM: test impossible.';
+            if (owmApiKeyStatus) owmApiKeyStatus.textContent = t('Clé OWM: test impossible.', 'Clave OWM: prueba imposible.');
         });
     }
 
@@ -4409,17 +4713,17 @@ document.addEventListener('DOMContentLoaded', async function() {
     if (testOwmApiKeyBtn) {
         testOwmApiKeyBtn.addEventListener('click', async () => {
             const keyValue = String(owmApiKeyInput?.value || '').trim();
-            if (owmApiKeyStatus) owmApiKeyStatus.textContent = 'Clé OWM: test en cours...';
+            if (owmApiKeyStatus) owmApiKeyStatus.textContent = t('Clé OWM: test en cours...', 'Clave OWM: prueba en curso...');
 
             const result = await testOpenWeatherApiKey(keyValue);
             if (owmApiKeyStatus) {
                 owmApiKeyStatus.textContent = result.ok
-                    ? `Clé OWM: ✅ ${result.message}`
-                    : `Clé OWM: ❌ ${result.message}`;
+                    ? `${t('Clé OWM', 'Clave OWM')}: ✅ ${result.message}`
+                    : `${t('Clé OWM', 'Clave OWM')}: ❌ ${result.message}`;
             }
 
             if (result.ok) {
-                setWeatherApiConfigVisibility(false, 'API météo connectée (isobares actives).');
+                setWeatherApiConfigVisibility(false, t('API météo connectée (isobares actives).', 'API meteo conectada (isobaras activas).'));
             } else {
                 setWeatherApiConfigVisibility(true);
             }
@@ -4431,12 +4735,12 @@ document.addEventListener('DOMContentLoaded', async function() {
         saveOwmApiKeyBtn.addEventListener('click', () => {
             const keyValue = String(owmApiKeyInput?.value || '').trim();
             if (!keyValue) {
-                alert('Renseigne une clé API OpenWeatherMap.');
+                alert(t('Renseigne une clé API OpenWeatherMap.', 'Introduce una clave API de OpenWeatherMap.'));
                 return;
             }
             localStorage.setItem(OWM_TILE_APPID_STORAGE_KEY, keyValue);
-            if (owmApiKeyStatus) owmApiKeyStatus.textContent = 'Clé OWM: enregistrée (non testée).';
-            alert('Clé OWM enregistrée. Recharge la page pour activer la couche isobares.');
+            if (owmApiKeyStatus) owmApiKeyStatus.textContent = t('Clé OWM: enregistrée (non testée).', 'Clave OWM: guardada (no probada).');
+            alert(t('Clé OWM enregistrée. Recharge la page pour activer la couche isobares.', 'Clave OWM guardada. Recarga la página para activar la capa de isobaras.'));
         });
     }
 
@@ -4445,9 +4749,9 @@ document.addEventListener('DOMContentLoaded', async function() {
         clearOwmApiKeyBtn.addEventListener('click', () => {
             localStorage.removeItem(OWM_TILE_APPID_STORAGE_KEY);
             if (owmApiKeyInput) owmApiKeyInput.value = '';
-            if (owmApiKeyStatus) owmApiKeyStatus.textContent = 'Clé OWM: supprimée.';
+            if (owmApiKeyStatus) owmApiKeyStatus.textContent = t('Clé OWM: supprimée.', 'Clave OWM: eliminada.');
             setWeatherApiConfigVisibility(true);
-            alert('Clé OWM supprimée. Recharge la page.');
+            alert(t('Clé OWM supprimée. Recharge la page.', 'Clave OWM eliminada. Recarga la página.'));
         });
     }
 
@@ -4462,17 +4766,17 @@ document.addEventListener('DOMContentLoaded', async function() {
 
             const { email, password } = readCloudUserCredentials();
             if (!email || !password) {
-                setCloudAuthStatus('Renseigne email + mot de passe.', true);
+                setCloudAuthStatus(t('Renseigne email + mot de passe.', 'Introduce email y contraseña.'), true);
                 return;
             }
 
             try {
                 const { error } = await cloudClient.auth.signInWithPassword({ email, password });
                 if (error) throw error;
-                setCloudAuthStatus(`Connexion email OK (${email})`);
+                setCloudAuthStatus(t(`Connexion email OK (${email})`, `Conexión email OK (${email})`));
                 activateTab('routes');
             } catch (error) {
-                setCloudAuthStatus(`Connexion email impossible: ${formatCloudError(error)}`, true);
+                setCloudAuthStatus(t(`Connexion email impossible: ${formatCloudError(error)}`, `Conexión email imposible: ${formatCloudError(error)}`), true);
             }
         });
     }
@@ -4488,12 +4792,12 @@ document.addEventListener('DOMContentLoaded', async function() {
 
             const { email, password } = readCloudUserCredentials();
             if (!email || !password) {
-                setCloudAuthStatus('Renseigne email + mot de passe.', true);
+                setCloudAuthStatus(t('Renseigne email + mot de passe.', 'Introduce email y contraseña.'), true);
                 return;
             }
 
             if (password.length < 8) {
-                setCloudAuthStatus('Mot de passe trop court (minimum 8 caractères).', true);
+                setCloudAuthStatus(t('Mot de passe trop court (minimum 8 caractères).', 'Contraseña demasiado corta (mínimo 8 caracteres).'), true);
                 return;
             }
 
@@ -4502,13 +4806,13 @@ document.addEventListener('DOMContentLoaded', async function() {
                 if (error) throw error;
 
                 if (data?.user && !data?.session) {
-                    setCloudAuthStatus(`Compte créé (${email}). Vérifie l'email de confirmation.`);
+                    setCloudAuthStatus(t(`Compte créé (${email}). Vérifie l'email de confirmation.`, `Cuenta creada (${email}). Revisa el email de confirmación.`));
                 } else {
-                    setCloudAuthStatus(`Compte créé et connecté (${email}).`);
+                    setCloudAuthStatus(t(`Compte créé et connecté (${email}).`, `Cuenta creada y conectada (${email}).`));
                     activateTab('routes');
                 }
             } catch (error) {
-                setCloudAuthStatus(`Création compte impossible: ${formatCloudError(error)}`, true);
+                setCloudAuthStatus(t(`Création compte impossible: ${formatCloudError(error)}`, `Creación de cuenta imposible: ${formatCloudError(error)}`), true);
             }
         });
     }
@@ -4522,7 +4826,7 @@ document.addEventListener('DOMContentLoaded', async function() {
                 cloudAuthUser = null;
                 updateCloudAuthUi();
             } catch (error) {
-                setCloudAuthStatus(`Déconnexion impossible: ${formatCloudError(error)}`, true);
+                setCloudAuthStatus(t(`Déconnexion impossible: ${formatCloudError(error)}`, `Desconexión imposible: ${formatCloudError(error)}`), true);
             }
         });
     }
@@ -4573,16 +4877,16 @@ document.addEventListener('DOMContentLoaded', async function() {
         const suggestionBox = document.getElementById('departureSuggestionInfo');
         lastDepartureSuggestion = null;
         if (suggestionBox) {
-            suggestionBox.textContent = 'Suggestion départ: en attente';
+            suggestionBox.textContent = t('Suggestion départ: en attente', 'Sugerencia salida: en espera');
             suggestionBox.classList.remove('suggestion-clickable');
         }
         const aiInfo = document.getElementById('aiRouteSuggestionInfo');
         const aiList = document.getElementById('aiRouteSuggestions');
         lastAiRouteCandidates = [];
-        if (aiInfo) aiInfo.textContent = 'Routes IA: en attente';
+        if (aiInfo) aiInfo.textContent = t('Routes IA: en attente', 'Rutas IA: en espera');
         if (aiList) aiList.innerHTML = '';
         const arrivalSummary = document.getElementById('arrivalSummary');
-        if (arrivalSummary) arrivalSummary.textContent = 'Analyse mouillage: en attente';
+        if (arrivalSummary) arrivalSummary.textContent = t('Analyse mouillage: en attente', 'Análisis fondeo: en espera');
         const anchorageContainer = document.getElementById('anchorageRecommendations');
         if (anchorageContainer) anchorageContainer.innerHTML = '';
         const restaurants = document.getElementById('nearbyRestaurants');
@@ -4605,6 +4909,12 @@ document.addEventListener('DOMContentLoaded', async function() {
             loadRoute(index);
         }
     });
+    const reverseRouteBtn = document.getElementById('reverseRouteBtn');
+    if (reverseRouteBtn) {
+        reverseRouteBtn.addEventListener('click', () => {
+            reverseCurrentRoute();
+        });
+    }
     document.getElementById('deleteRouteBtn').addEventListener('click', () => {
         const sel = document.getElementById('savedRoutesSelect');
         deleteRoute(sel.selectedIndex);
@@ -4627,14 +4937,14 @@ document.addEventListener('DOMContentLoaded', async function() {
     if (cloudRefreshBtn) {
         cloudRefreshBtn.addEventListener('click', async () => {
             if (!isCloudReady()) {
-                setCloudStatus('Cloud non connecté', true);
+                setCloudStatus(t('Cloud non connecté', 'Nube no conectada'), true);
                 return;
             }
 
             try {
                 await autoPullRoutesFromCloud('manual');
             } catch (error) {
-                setCloudStatus(`Rafraîchissement cloud impossible: ${formatCloudError(error)}`, true);
+                setCloudStatus(t(`Rafraîchissement cloud impossible: ${formatCloudError(error)}`, `Actualización nube imposible: ${formatCloudError(error)}`), true);
             }
         });
     }
@@ -4664,7 +4974,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         if (hiddenConfig?.url && hiddenConfig?.anonKey && hiddenConfig?.projectKey) {
             await connectCloud(hiddenConfig, { silent: true });
         } else {
-            setCloudStatus('Mode local (pas de cloud configuré)');
+            setCloudStatus(t('Mode local (pas de cloud configuré)', 'Modo local (nube no configurada)'));
         }
     }
 
@@ -4701,7 +5011,7 @@ async function computeRoute() {
 
     const departureDateTime = new Date(`${departureDate}T${departureTime}:00`);
     if (Number.isNaN(departureDateTime.getTime())) {
-        alert('Date/heure de départ invalide');
+        alert(t('Date/heure de départ invalide', 'Fecha/hora de salida inválida'));
         return;
     }
 
@@ -5026,7 +5336,7 @@ async function computeRoute() {
     drawRouteByWindSpeed(routeSegmentsForDraw);
     drawStrongWaveDirections(routeSegmentsForDraw);
 
-    let segmentsHtml = '<table id="segmentsTable" style="width:100%; border-collapse:collapse; margin-top:8px; font-size:8px;"><tr style="border-bottom:1px solid #ccc;"><th style="text-align:left; padding:2px; width:22px;">WP</th><th style="text-align:left; padding:2px; width:14px;">Seg</th><th style="text-align:right; padding:2px;">Départ</th><th style="text-align:right; padding:2px;">Arrivée</th><th style="text-align:right; padding:2px;">Cap</th><th style="text-align:right; padding:2px;">Dist.</th><th style="text-align:right; padding:2px;">Temps</th><th style="text-align:right; padding:2px;">Vit.</th><th style="text-align:right; padding:2px;">V.V</th><th style="text-align:right; padding:2px;">D.V</th><th style="text-align:left; padding:2px;">Voiles</th></tr>';
+    let segmentsHtml = `<table id="segmentsTable" style="width:100%; border-collapse:collapse; margin-top:8px; font-size:8px;"><tr style="border-bottom:1px solid #ccc;"><th style="text-align:left; padding:2px; width:22px;">WP</th><th style="text-align:left; padding:2px; width:14px;">Seg</th><th style="text-align:right; padding:2px;">${t('Départ', 'Salida')}</th><th style="text-align:right; padding:2px;">${t('Arrivée', 'Llegada')}</th><th style="text-align:right; padding:2px;">${t('Cap', 'Rumbo')}</th><th style="text-align:right; padding:2px;">${t('Dist.', 'Dist.')}</th><th style="text-align:right; padding:2px;">${t('Temps', 'Tiempo')}</th><th style="text-align:right; padding:2px;">${t('Vit.', 'Vel.')}</th><th style="text-align:right; padding:2px;">${t('V.V', 'V.V')}</th><th style="text-align:right; padding:2px;">${t('D.V', 'D.V')}</th><th style="text-align:left; padding:2px;">${t('Voiles', 'Velas')}</th></tr>`;
     
     segmentsInfo.forEach((seg, segIndex) => {
         segmentsHtml += `<tr class="segment-row" data-seg-index="${segIndex}" style="border-bottom:1px solid #eee; cursor:pointer;"><td style="padding:2px; width:22px;" title="${seg.startLabel}">${seg.startIcon}</td><td style="padding:2px; width:14px;">${seg.number}</td><td style="text-align:right; padding:2px;">${seg.departureLabel}</td><td style="text-align:right; padding:2px;">${seg.arrivalLabel}</td><td style="text-align:right; padding:2px;">${seg.bearing}°</td><td style="text-align:right; padding:2px;">${seg.distance} nm</td><td style="text-align:right; padding:2px;">${seg.time} h</td><td style="text-align:right; padding:2px;">${seg.speed} kn</td><td style="text-align:right; padding:2px;">${seg.windSpeed} kn</td><td style="text-align:right; padding:2px;">${seg.windDirection}°</td><td style="padding:2px;">${seg.sailSetup}</td></tr>`;
@@ -5133,12 +5443,12 @@ async function computeRoute() {
 
     document.getElementById("info").innerHTML =
         `<div class="segment-summary">
-            <strong>Segments: ${routePoints.length - 1}</strong><br>
-            <strong>Distance totale: ${totalDistance.toFixed(2)} nm</strong><br>
-            <strong>Temps total: ${totalTime.toFixed(2)} h</strong><br>
-            <strong>WP auto générés: ${generatedAutoWaypointCount}</strong><br>
-            <strong>Météo (dernière MAJ): ${weatherUpdatedAt}</strong><br>
-            <strong>Évolution pression: ${pressureSummary}</strong>
+            <strong>${t('Segments', 'Segmentos')}: ${routePoints.length - 1}</strong><br>
+            <strong>${t('Distance totale', 'Distancia total')}: ${totalDistance.toFixed(2)} nm</strong><br>
+            <strong>${t('Temps total', 'Tiempo total')}: ${totalTime.toFixed(2)} h</strong><br>
+            <strong>${t('WP auto générés', 'WP auto generados')}: ${generatedAutoWaypointCount}</strong><br>
+            <strong>${t('Météo (dernière MAJ)', 'Meteo (última ACT)')}: ${weatherUpdatedAt}</strong><br>
+            <strong>${t('Évolution pression', 'Evolución presión')}: ${pressureSummary}</strong>
         </div>` +
         segmentsHtml;
 
@@ -5202,12 +5512,12 @@ function formatWeekdayHourUtc(dateObj) {
     const roundedMinutes = Math.round(minutes / 10) * 10;
     rounded.setMinutes(roundedMinutes, 0, 0);
 
-    const weekday = rounded.toLocaleDateString('fr-FR', { weekday: 'long' });
+    const weekday = rounded.toLocaleDateString(getCurrentLocale(), { weekday: 'long' });
     const day = rounded.getDate();
     const hour = String(rounded.getHours()).padStart(2, '0');
     const minute = String(rounded.getMinutes()).padStart(2, '0');
 
-    return `${weekday} ${day} ${hour}h${minute}`;
+    return `${weekday} ${day} ${hour}:${minute}`;
 }
 
 function formatLocalSlotLabel(slot) {
@@ -5222,16 +5532,16 @@ function buildPressureEvolutionSummary(waypointPassageWeather) {
         .map(entry => entry.weather?.pressure)
         .filter(value => Number.isFinite(value));
 
-    if (pressureSeries.length < 2) return 'Données insuffisantes';
+    if (pressureSeries.length < 2) return t('Données insuffisantes', 'Datos insuficientes');
 
     const firstPressure = pressureSeries[0];
     const lastPressure = pressureSeries[pressureSeries.length - 1];
     const delta = lastPressure - firstPressure;
     const roundedDelta = `${delta >= 0 ? '+' : ''}${delta.toFixed(1)} hPa`;
 
-    let trend = 'stable';
-    if (delta > 0.8) trend = 'hausse';
-    if (delta < -0.8) trend = 'baisse';
+    let trend = t('stable', 'estable');
+    if (delta > 0.8) trend = t('hausse', 'subida');
+    if (delta < -0.8) trend = t('baisse', 'bajada');
 
     return `${firstPressure.toFixed(0)} → ${lastPressure.toFixed(0)} hPa (${roundedDelta}, ${trend})`;
 }
@@ -5243,49 +5553,51 @@ function buildWeatherMetricEvolutionSummary(values, {
     fallThreshold = -0.8
 } = {}) {
     const series = Array.isArray(values) ? values.filter(value => Number.isFinite(value)) : [];
-    if (series.length < 2) return 'Données insuffisantes';
+    if (series.length < 2) return t('Données insuffisantes', 'Datos insuficientes');
 
     const first = series[0];
     const last = series[series.length - 1];
     const delta = last - first;
     const sign = delta >= 0 ? '+' : '';
 
-    let trend = 'stable';
-    if (delta > riseThreshold) trend = 'hausse';
-    if (delta < fallThreshold) trend = 'baisse';
+    let trend = t('stable', 'estable');
+    if (delta > riseThreshold) trend = t('hausse', 'subida');
+    if (delta < fallThreshold) trend = t('baisse', 'bajada');
 
     return `${first.toFixed(decimals)} → ${last.toFixed(decimals)}${unit} (${sign}${delta.toFixed(decimals)}${unit}, ${trend})`;
 }
 
 function weatherCodeToLabel(code) {
     const labels = {
-        0: 'Ciel dégagé',
-        1: 'Peu nuageux',
-        2: 'Partiellement nuageux',
-        3: 'Couvert',
-        45: 'Brouillard',
-        48: 'Brouillard givrant',
-        51: 'Bruine légère',
-        53: 'Bruine modérée',
-        55: 'Bruine forte',
-        61: 'Pluie faible',
-        63: 'Pluie modérée',
-        65: 'Pluie forte',
-        71: 'Neige faible',
-        73: 'Neige modérée',
-        75: 'Neige forte',
-        80: 'Averses faibles',
-        81: 'Averses modérées',
-        82: 'Averses fortes',
-        95: 'Orage'
+        0: t('Ciel dégagé', 'Cielo despejado'),
+        1: t('Peu nuageux', 'Poco nuboso'),
+        2: t('Partiellement nuageux', 'Parcialmente nuboso'),
+        3: t('Couvert', 'Cubierto'),
+        45: t('Brouillard', 'Niebla'),
+        48: t('Brouillard givrant', 'Niebla helada'),
+        51: t('Bruine légère', 'Llovizna ligera'),
+        53: t('Bruine modérée', 'Llovizna moderada'),
+        55: t('Bruine forte', 'Llovizna fuerte'),
+        61: t('Pluie faible', 'Lluvia débil'),
+        63: t('Pluie modérée', 'Lluvia moderada'),
+        65: t('Pluie forte', 'Lluvia fuerte'),
+        71: t('Neige faible', 'Nieve débil'),
+        73: t('Neige modérée', 'Nieve moderada'),
+        75: t('Neige forte', 'Nieve fuerte'),
+        80: t('Averses faibles', 'Chubascos débiles'),
+        81: t('Averses modérées', 'Chubascos moderados'),
+        82: t('Averses fortes', 'Chubascos fuertes'),
+        95: t('Orage', 'Tormenta')
     };
 
-    return labels[code] || 'Conditions variables';
+    return labels[code] || t('Conditions variables', 'Condiciones variables');
 }
 
 function degreesToCardinalFr(degrees) {
     if (!Number.isFinite(degrees)) return 'N/A';
-    const directions = ['Nord', 'Nord-Est', 'Est', 'Sud-Est', 'Sud', 'Sud-Ouest', 'Ouest', 'Nord-Ouest'];
+    const directions = currentLanguage === 'es'
+        ? ['Norte', 'Noreste', 'Este', 'Sureste', 'Sur', 'Suroeste', 'Oeste', 'Noroeste']
+        : ['Nord', 'Nord-Est', 'Est', 'Sud-Est', 'Sud', 'Sud-Ouest', 'Ouest', 'Nord-Ouest'];
     const normalized = ((degrees % 360) + 360) % 360;
     const index = Math.round(normalized / 45) % 8;
     return directions[index];
@@ -5423,7 +5735,7 @@ function formatWeatherTooltipContent(weather, referenceLabel) {
     const passageRef = referenceLabel || formatLocalSlotLabel({ date: departureDate, hour: departureTime });
     const summary = weatherCodeToLabel(weather.weatherCode);
 
-    return `<strong>Météo</strong><br>${summary}<br>Temp: ${temp}<br>Vent: ${windSpeed} (${windDirection}, ${windCardinal})<br>Rafales: ${windGust}<br>Pluie: ${precipitation}<br>Pression: ${pressure}<br>Houle: ${waveHeight} · ${wavePeriod} · ${waveDirection} (${waveCardinal})<br>${seaComfort}<br>Passage WP: ${passageRef}`;
+    return `<strong>${t('Météo', 'Meteo')}</strong><br>${summary}<br>${t('Temp', 'Temp')}: ${temp}<br>${t('Vent', 'Viento')}: ${windSpeed} (${windDirection}, ${windCardinal})<br>${t('Rafales', 'Ráfagas')}: ${windGust}<br>${t('Pluie', 'Lluvia')}: ${precipitation}<br>${t('Pression', 'Presión')}: ${pressure}<br>${t('Houle', 'Oleaje')}: ${waveHeight} · ${wavePeriod} · ${waveDirection} (${waveCardinal})<br>${seaComfort}<br>${t('Passage WP', 'Paso WP')}: ${passageRef}`;
 }
 
 function formatUtcDateTime(isoString) {
@@ -5431,7 +5743,7 @@ function formatUtcDateTime(isoString) {
     const date = new Date(isoString);
     if (Number.isNaN(date.getTime())) return 'N/A';
 
-    return `${date.toLocaleDateString('fr-FR')} ${date.toLocaleTimeString('fr-FR', {
+    return `${date.toLocaleDateString(getCurrentLocale())} ${date.toLocaleTimeString(getCurrentLocale(), {
         hour: '2-digit',
         minute: '2-digit'
     })}`;
@@ -5464,14 +5776,14 @@ function renderWaypointWeatherInfo(marker, weather, referenceLabel) {
         `<strong>${waypointLabel}</strong><br>` +
         `${current.lat.toFixed(4)}, ${current.lng.toFixed(4)}<br>` +
         `<strong>${summary}</strong><br>` +
-        `Température: ${temp}<br>` +
-        `Vent: ${windSpeed} — ${windDirectionDeg} (${windDirectionCardinal})<br>` +
-        `Rafales: ${windGust}<br>` +
-        `Pluie: ${precipitation}<br>` +
-        `Pression: ${pressure}<br>` +
-        `Houle: ${waveHeight} · ${wavePeriod} · ${waveDirectionDeg} (${waveDirectionCardinal})<br>` +
+        `${t('Température', 'Temperatura')}: ${temp}<br>` +
+        `${t('Vent', 'Viento')}: ${windSpeed} — ${windDirectionDeg} (${windDirectionCardinal})<br>` +
+        `${t('Rafales', 'Ráfagas')}: ${windGust}<br>` +
+        `${t('Pluie', 'Lluvia')}: ${precipitation}<br>` +
+        `${t('Pression', 'Presión')}: ${pressure}<br>` +
+        `${t('Houle', 'Oleaje')}: ${waveHeight} · ${wavePeriod} · ${waveDirectionDeg} (${waveDirectionCardinal})<br>` +
         `${seaComfort}<br>` +
-        `Passage WP: ${passageRef}`;
+        `${t('Passage WP', 'Paso WP')}: ${passageRef}`;
 }
 
 function formatWaypointPopupContent(marker, weather, referenceLabel) {
@@ -5484,7 +5796,7 @@ function formatWaypointPopupContent(marker, weather, referenceLabel) {
 
 async function openWaypointWeatherPopup(marker) {
     const markerLabel = marker?._ceiboLabel || 'Waypoint';
-    marker.bindPopup(`<strong>${markerLabel}</strong><br>Chargement météo...`, { maxWidth: 340, autoPan: false });
+    marker.bindPopup(`<strong>${markerLabel}</strong><br>${t('Chargement météo...', 'Cargando meteo...')}`, { maxWidth: 340, autoPan: false });
     marker.openPopup();
 
     try {
@@ -5492,7 +5804,7 @@ async function openWaypointWeatherPopup(marker) {
         marker.setPopupContent(formatWaypointPopupContent(marker, result.weather, result.referenceLabel));
         marker.openPopup();
     } catch (error) {
-        marker.setPopupContent('<strong>Waypoint</strong><br>Météo indisponible');
+        marker.setPopupContent(`<strong>${t('Waypoint', 'Waypoint')}</strong><br>${t('Météo indisponible', 'Meteo no disponible')}`);
         marker.openPopup();
     }
 }
@@ -5510,7 +5822,7 @@ function createWaypointMarker(latlng) {
     });
 
     marker.on('mouseover', async function() {
-        marker.bindTooltip('Chargement météo...', { direction: 'top', opacity: 0.95 });
+        marker.bindTooltip(t('Chargement météo...', 'Cargando meteo...'), { direction: 'top', opacity: 0.95 });
         marker.openTooltip();
 
         try {
@@ -5518,7 +5830,7 @@ function createWaypointMarker(latlng) {
             marker.setTooltipContent(formatWeatherTooltipContent(result.weather, result.referenceLabel));
             marker.openTooltip();
         } catch (error) {
-            marker.setTooltipContent('Météo indisponible');
+            marker.setTooltipContent(t('Météo indisponible', 'Meteo no disponible'));
             marker.openTooltip();
         }
     });
@@ -5535,7 +5847,7 @@ function createWaypointMarker(latlng) {
         } catch (error) {
             const weatherContainer = document.getElementById('waypointWeatherInfo');
             if (weatherContainer) {
-                weatherContainer.innerHTML = '<strong>Waypoint</strong><br>Météo indisponible';
+                weatherContainer.innerHTML = `<strong>${t('Waypoint', 'Waypoint')}</strong><br>${t('Météo indisponible', 'Meteo no disponible')}`;
             }
         }
     });
@@ -5572,7 +5884,7 @@ function createGeneratedWaypointMarker(latlng, label, badgeText) {
     marker._ceiboLabel = label;
 
     marker.on('mouseover', async function() {
-        marker.bindTooltip('Chargement météo...', { direction: 'top', opacity: 0.95 });
+        marker.bindTooltip(t('Chargement météo...', 'Cargando meteo...'), { direction: 'top', opacity: 0.95 });
         marker.openTooltip();
 
         try {
@@ -5580,7 +5892,7 @@ function createGeneratedWaypointMarker(latlng, label, badgeText) {
             marker.setTooltipContent(formatWeatherTooltipContent(result.weather, result.referenceLabel));
             marker.openTooltip();
         } catch (error) {
-            marker.setTooltipContent('Météo indisponible');
+            marker.setTooltipContent(t('Météo indisponible', 'Meteo no disponible'));
             marker.openTooltip();
         }
     });
@@ -5597,7 +5909,7 @@ function createGeneratedWaypointMarker(latlng, label, badgeText) {
         } catch (error) {
             const weatherContainer = document.getElementById('waypointWeatherInfo');
             if (weatherContainer) {
-                weatherContainer.innerHTML = `<strong>${label}</strong><br>Météo indisponible`;
+                weatherContainer.innerHTML = `<strong>${label}</strong><br>${t('Météo indisponible', 'Meteo no disponible')}`;
             }
         }
     });
@@ -5639,7 +5951,7 @@ function drawWaypointWindDirections(waypointPassageWeather) {
             zIndexOffset: 1000
         }).addTo(map);
 
-        arrowLayer.bindTooltip(`Vent de ${sourceCardinal} · ${windSpeedLabel}`, {
+        arrowLayer.bindTooltip(`${t('Vent de', 'Viento de')} ${sourceCardinal} · ${windSpeedLabel}`, {
             direction: 'top',
             opacity: 0.95
         });
@@ -5674,14 +5986,14 @@ async function updateArrivalPointWeather(totalTimeHours) {
         const arrivalLine = formatWeatherTooltipContent(arrivalWeather, arrivalRef);
 
         const popupContent =
-            `<strong>Point d'arrivée</strong><br>` +
-            `<strong>Météo actuelle</strong><br>${currentLine.replace('<strong>Météo</strong><br>', '')}<br><br>` +
-            `<strong>Météo prévue (${arrivalRef})</strong><br>${arrivalLine.replace('<strong>Météo</strong><br>', '')}`;
+            `<strong>${t("Point d'arrivée", 'Punto de llegada')}</strong><br>` +
+            `<strong>${t('Météo actuelle', 'Meteo actual')}</strong><br>${currentLine.replace('<strong>Météo</strong><br>', '').replace('<strong>Meteo</strong><br>', '')}<br><br>` +
+            `<strong>${t('Météo prévue', 'Meteo prevista')} (${arrivalRef})</strong><br>${arrivalLine.replace('<strong>Météo</strong><br>', '').replace('<strong>Meteo</strong><br>', '')}`;
 
         arrivalMarker.bindPopup(popupContent, { maxWidth: 320 });
         arrivalMarker.openPopup();
     } catch (error) {
-        arrivalMarker.bindPopup('<strong>Point d\'arrivée</strong><br>Météo indisponible', { maxWidth: 300 });
+        arrivalMarker.bindPopup(`<strong>${t("Point d'arrivée", 'Punto de llegada')}</strong><br>${t('Météo indisponible', 'Meteo no disponible')}`, { maxWidth: 300 });
     }
 }
 
@@ -5758,9 +6070,9 @@ function drawRouteByWindSpeed(routeSegments) {
             });
 
             const popupText =
-                `<strong>Segment ${seg.segmentNumber}</strong><br>` +
-                `Départ: ${seg.departureHour} UTC<br>` +
-                `Réglage voiles: ${seg.sailSetup}<br>` +
+                `<strong>${t('Segment', 'Segmento')} ${seg.segmentNumber}</strong><br>` +
+                `${t('Départ', 'Salida')}: ${seg.departureHour} UTC<br>` +
+                `${t('Réglage voiles', 'Ajuste velas')}: ${seg.sailSetup}<br>` +
                 `${seg.sailComment}`;
 
             polyline.bindPopup(popupText, { maxWidth: 340 });
@@ -5856,8 +6168,8 @@ function renderWindSpeedLegend() {
     if (!legend) return;
 
     legend.innerHTML =
-        '<strong>Légende vent (route)</strong>' +
-        '<div class="wind-legend-row"><span class="wind-legend-swatch" style="background:#ff4fa3"></span><span>Moteur (&lt; 5 kn) · 7 kn</span></div>' +
+    `<strong>${t('Légende vent (route)', 'Leyenda viento (ruta)')}</strong>` +
+    `<div class="wind-legend-row"><span class="wind-legend-swatch" style="background:#ff4fa3"></span><span>${t('Moteur (&lt; 5 kn) · 7 kn', 'Motor (&lt; 5 kn) · 7 kn')}</span></div>` +
         '<div class="wind-legend-row"><span class="wind-legend-swatch" style="background:#2ecc71"></span><span>&lt; 8 kn</span></div>' +
         '<div class="wind-legend-row"><span class="wind-legend-swatch" style="background:#f1c40f"></span><span>8–14 kn</span></div>' +
         '<div class="wind-legend-row"><span class="wind-legend-swatch" style="background:#e67e22"></span><span>14–20 kn</span></div>' +
@@ -5969,9 +6281,22 @@ function updateCloudDataSourceStatus(sourceLabel, routeCount = null, photoCount 
     if (!status) return;
 
     const safeSource = String(sourceLabel || 'inconnu');
+    const sourceLabelMap = {
+        'verrouillé (auth requise)': t('verrouillé (auth requise)', 'bloqueado (auth requerida)'),
+        'attente authentification': t('attente authentification', 'esperando autenticación'),
+        'cache local': t('cache local', 'caché local'),
+        'cloud': t('cloud', 'nube'),
+        'cache local (fallback)': t('cache local (fallback)', 'caché local (fallback)'),
+        'indisponible': t('indisponible', 'no disponible'),
+        'initialisation': t('initialisation', 'inicialización'),
+        'cache local (cloud vide)': t('cache local (cloud vide)', 'caché local (nube vacía)'),
+        'local (non synchronisé)': t('local (non synchronisé)', 'local (no sincronizado)'),
+        'cache local (synchro en échec)': t('cache local (synchro en échec)', 'caché local (sincronización fallida)')
+    };
+    const safeSourceLocalized = sourceLabelMap[safeSource] || safeSource;
     const routesLabel = Number.isFinite(routeCount) ? routeCount : getSavedRoutes().length;
     const photosLabel = Number.isFinite(photoCount) ? photoCount : waypointPhotoEntries.length;
-    status.textContent = `Données routes/photos: ${safeSource} · routes: ${routesLabel} · photos: ${photosLabel}`;
+    status.textContent = `${t('Données routes/photos', 'Datos rutas/fotos')}: ${safeSourceLocalized} · ${t('routes', 'rutas')}: ${routesLabel} · ${t('photos', 'fotos')}: ${photosLabel}`;
 }
 
 function formatCloudError(error) {
@@ -5999,11 +6324,11 @@ async function autoPullRoutesFromCloud(trigger = 'auto') {
         const routes = await pullRoutesFromCloud();
         refreshSavedList();
         if (trigger !== 'silent') {
-            setCloudStatus(`Cloud synchro auto · ${routes.length} route(s)`);
+            setCloudStatus(t(`Cloud synchro auto · ${routes.length} route(s)`, `Nube sincronización auto · ${routes.length} ruta(s)`));
         }
         return true;
     } catch (error) {
-        setCloudStatus(`Synchro auto cloud impossible: ${formatCloudError(error)}`, true);
+        setCloudStatus(t(`Synchro auto cloud impossible: ${formatCloudError(error)}`, `Sincronización auto nube imposible: ${formatCloudError(error)}`), true);
         return false;
     } finally {
         cloudAutoPullInFlight = false;
@@ -6136,7 +6461,7 @@ async function connectCloud(config, { silent = false } = {}) {
         cloudConnected = false;
         cloudAuthUser = null;
         updateCloudAuthUi();
-        if (!silent) setCloudStatus('Mode local (paramètres cloud incomplets)');
+        if (!silent) setCloudStatus(t('Mode local (paramètres cloud incomplets)', 'Modo local (parámetros nube incompletos)'));
         return false;
     }
 
@@ -6179,9 +6504,9 @@ async function connectCloud(config, { silent = false } = {}) {
         if (isCloudReady()) {
             const routes = await pullRoutesFromCloud();
             refreshSavedList();
-            setCloudStatus(`Cloud connecté · ${routes.length} route(s) partagée(s)`);
+            setCloudStatus(t(`Cloud connecté · ${routes.length} route(s) partagée(s)`, `Nube conectada · ${routes.length} ruta(s) compartida(s)`));
         } else {
-            setCloudStatus('Cloud connecté · authentification requise.');
+            setCloudStatus(t('Cloud connecté · authentification requise.', 'Nube conectada · autenticación requerida.'));
         }
 
         return true;
@@ -6197,7 +6522,7 @@ async function connectCloud(config, { silent = false } = {}) {
         cloudConnected = false;
         cloudAuthUser = null;
         updateCloudAuthUi();
-        setCloudStatus(`Connexion cloud impossible: ${formatCloudError(error)}`, true);
+        setCloudStatus(t(`Connexion cloud impossible: ${formatCloudError(error)}`, `Conexión nube imposible: ${formatCloudError(error)}`), true);
         return false;
     }
 }
@@ -6231,7 +6556,7 @@ function refreshSavedList() {
 }
 
 async function saveRoute() {
-    if (routePoints.length === 0) return alert('Aucun waypoint à sauvegarder');
+    if (routePoints.length === 0) return alert(t('Aucun waypoint à sauvegarder', 'No hay waypoints para guardar'));
     const nameInput = document.getElementById('routeNameInput');
     const rawName = (nameInput?.value || '').trim();
     const saved = [...getSavedRoutes()];
@@ -6270,10 +6595,10 @@ async function saveRoute() {
     if (isCloudReady()) {
         try {
             await pushRoutesToCloud();
-            setCloudStatus(`Cloud synchronisé · ${saved.length} route(s)`);
+            setCloudStatus(t(`Cloud synchronisé · ${saved.length} route(s)`, `Nube sincronizada · ${saved.length} ruta(s)`));
             updateCloudDataSourceStatus('cloud', saved.length, waypointPhotoEntries.length);
         } catch (error) {
-            setCloudStatus(`Sauvegarde locale OK, synchro cloud échouée: ${formatCloudError(error)}`, true);
+            setCloudStatus(t(`Sauvegarde locale OK, synchro cloud échouée: ${formatCloudError(error)}`, `Guardado local OK, sincronización nube fallida: ${formatCloudError(error)}`), true);
             updateCloudDataSourceStatus('cache local (synchro en échec)', saved.length, waypointPhotoEntries.length);
         }
     }
@@ -6285,7 +6610,9 @@ async function saveRoute() {
         sel.selectedIndex = currentLoadedRouteIndex;
     }
 
-    alert(canUpdateLoadedRoute ? `Route mise à jour: ${name}` : `Route sauvegardée: ${name}`);
+    alert(canUpdateLoadedRoute
+        ? t(`Route mise à jour: ${name}`, `Ruta actualizada: ${name}`)
+        : t(`Route sauvegardée: ${name}`, `Ruta guardada: ${name}`));
 }
 
 function clearCurrentRoute() {
@@ -6310,16 +6637,16 @@ function clearCurrentRoute() {
     const suggestionBox = document.getElementById('departureSuggestionInfo');
     lastDepartureSuggestion = null;
     if (suggestionBox) {
-        suggestionBox.textContent = 'Suggestion départ: en attente';
+        suggestionBox.textContent = t('Suggestion départ: en attente', 'Sugerencia salida: en espera');
         suggestionBox.classList.remove('suggestion-clickable');
     }
     const aiInfo = document.getElementById('aiRouteSuggestionInfo');
     const aiList = document.getElementById('aiRouteSuggestions');
     lastAiRouteCandidates = [];
-    if (aiInfo) aiInfo.textContent = 'Routes IA: en attente';
+    if (aiInfo) aiInfo.textContent = t('Routes IA: en attente', 'Rutas IA: en espera');
     if (aiList) aiList.innerHTML = '';
     const arrivalSummary = document.getElementById('arrivalSummary');
-    if (arrivalSummary) arrivalSummary.textContent = 'Analyse mouillage: en attente';
+    if (arrivalSummary) arrivalSummary.textContent = t('Analyse mouillage: en attente', 'Análisis fondeo: en espera');
     const anchorageContainer = document.getElementById('anchorageRecommendations');
     if (anchorageContainer) anchorageContainer.innerHTML = '';
     const restaurants = document.getElementById('nearbyRestaurants');
@@ -6329,9 +6656,60 @@ function clearCurrentRoute() {
     updateSelectedWaypointInfo();
 }
 
+function reverseCurrentRoute() {
+    if (!Array.isArray(routePoints) || routePoints.length < 2) {
+        alert(t(
+            'Il faut au moins 2 waypoints pour créer une route retour',
+            'Se necesitan al menos 2 waypoints para crear una ruta de retorno'
+        ));
+        return;
+    }
+
+    const reversedPoints = routePoints
+        .slice()
+        .reverse()
+        .map(point => ({ lat: Number(point.lat), lng: Number(point.lng ?? point.lon) }))
+        .filter(point => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+
+    if (reversedPoints.length < 2) {
+        alert(t(
+            'Impossible d\'inverser cette route (waypoints invalides)',
+            'No se puede invertir esta ruta (waypoints no válidos)'
+        ));
+        return;
+    }
+
+    markers.forEach(marker => {
+        if (marker && map?.hasLayer(marker)) {
+            map.removeLayer(marker);
+        }
+    });
+    markers = [];
+    routePoints = [];
+    selectedUserWaypointIndex = -1;
+
+    reversedPoints.forEach(point => {
+        addUserWaypoint(L.latLng(point.lat, point.lng), { select: false, invalidate: false });
+    });
+
+    const routeNameInput = document.getElementById('routeNameInput');
+    if (routeNameInput) {
+        const baseName = String(routeNameInput.value || '').trim();
+        if (!baseName) {
+            routeNameInput.value = t('Route RETOUR', 'Ruta RETOUR');
+        } else if (!/\bretour\b/i.test(baseName)) {
+            routeNameInput.value = `${baseName} RETOUR`;
+        }
+    }
+
+    invalidateComputedRouteDisplay();
+    drawRoute(routePoints);
+    updateSelectedWaypointInfo();
+}
+
 function loadRoute(index) {
     const saved = getSavedRoutes();
-    if (!saved || !saved[index]) return alert('Aucune route sélectionnée');
+    if (!saved || !saved[index]) return alert(t('Aucune route sélectionnée', 'Ninguna ruta seleccionada'));
     const r = saved[index];
 
     clearCurrentRoute();
@@ -6386,8 +6764,8 @@ function deleteRoute(index) {
     const finalize = () => refreshSavedList();
     if (isCloudReady()) {
         pushRoutesToCloud()
-            .then(() => setCloudStatus(`Cloud synchronisé · ${saved.length} route(s)`))
-            .catch(error => setCloudStatus(`Suppression locale OK, synchro cloud échouée: ${formatCloudError(error)}`, true))
+            .then(() => setCloudStatus(t(`Cloud synchronisé · ${saved.length} route(s)`, `Nube sincronizada · ${saved.length} ruta(s)`)))
+            .catch(error => setCloudStatus(t(`Suppression locale OK, synchro cloud échouée: ${formatCloudError(error)}`, `Eliminación local OK, sincronización nube fallida: ${formatCloudError(error)}`), true))
             .finally(finalize);
         return;
     }
@@ -6397,7 +6775,7 @@ function deleteRoute(index) {
 
 function exportRoute(index) {
     const saved = getSavedRoutes();
-    if (!saved || !saved[index]) return alert('Aucune route sélectionnée');
+    if (!saved || !saved[index]) return alert(t('Aucune route sélectionnée', 'Ninguna ruta seleccionada'));
     const data = JSON.stringify(saved[index], null, 2);
     const blob = new Blob([data], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -6436,7 +6814,7 @@ function routeToGpx(route) {
 
 function exportRouteGpx(index) {
     const saved = getSavedRoutes();
-    if (!saved || !saved[index]) return alert('Aucune route sélectionnée');
+    if (!saved || !saved[index]) return alert(t('Aucune route sélectionnée', 'Ninguna ruta seleccionada'));
 
     const gpx = routeToGpx(saved[index]);
     const blob = new Blob([gpx], { type: 'application/gpx+xml' });
@@ -6514,14 +6892,14 @@ function handleImport(e) {
             if (isCloudReady()) {
                 try {
                     await pushRoutesToCloud();
-                    setCloudStatus(`Cloud synchronisé · ${saved.length} route(s)`);
+                    setCloudStatus(t(`Cloud synchronisé · ${saved.length} route(s)`, `Nube sincronizada · ${saved.length} ruta(s)`));
                 } catch (error) {
-                    setCloudStatus(`Import local OK, synchro cloud échouée: ${formatCloudError(error)}`, true);
+                    setCloudStatus(t(`Import local OK, synchro cloud échouée: ${formatCloudError(error)}`, `Importación local OK, sincronización nube fallida: ${formatCloudError(error)}`), true);
                 }
             }
             refreshSavedList();
-            alert('Import OK');
-        } catch (err) { alert('Fichier JSON/GPX invalide'); }
+            alert(t('Import OK', 'Importación OK'));
+        } catch (err) { alert(t('Fichier JSON/GPX invalide', 'Archivo JSON/GPX inválido')); }
     };
     reader.readAsText(file);
 }

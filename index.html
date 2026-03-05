@@ -17,7 +17,7 @@
 <body>
 
 <div id="sidebar">
-    <h2>CEIBO Router Cloud version</h2>
+    <h2 id="appTitle">CEIBO Router Cloud version</h2>
 
     <div class="sidebar-tabs">
         <button id="cloudTabBtn" class="tab-btn active" type="button">Cloud</button>
@@ -92,11 +92,11 @@
                 <button id="deleteSelectedWpBtn" style="flex:1;">Supprimer WP</button>
             <button id="recenterBtn" style="flex:1;">Recentrer route</button>
         </div>
+        <div id="windSpeedLegend"></div>
         <div id="selectedWpInfo" style="margin-top:6px; font-size:12px; opacity:0.9;">WP sélectionné: aucun · clic sur WP pour sélectionner · clic droit pour supprimer</div>
 
         <div id="waypointWeatherInfo"></div>
         <div id="info"></div>
-        <div id="windSpeedLegend"></div>
     </div>
 
     <div id="routesTab" class="tab-panel">
@@ -108,6 +108,9 @@
             <button id="exportRouteBtn" style="flex:1;">Exporter</button>
             <button id="exportRouteGpxBtn" style="flex:1;">Exporter GPX</button>
             <button id="resetBtn" style="flex:1;">Reset</button>
+        </div>
+        <div class="button-row">
+            <button id="reverseRouteBtn" style="flex:1;">Route retour</button>
         </div>
         <button id="exportVoyagePdfBtn" style="margin-top:8px;">Exporter rapport PDF</button>
 
@@ -151,7 +154,7 @@
             <div id="cloudAuthStatus" class="cloud-status">Utilisateur: non connecté</div>
             <div id="cloudStatus" class="cloud-status">Mode local (pas de cloud configuré)</div>
             <div id="cloudDataSourceStatus" class="cloud-status">Données routes/photos: en attente</div>
-            <div class="cloud-status">Routes + photos waypoint: synchronisation cloud automatique.</div>
+            <div id="cloudAutoSyncInfo" class="cloud-status">Routes + photos waypoint: synchronisation cloud automatique.</div>
         </div>
     </div>
 
@@ -274,10 +277,10 @@
 
         <div id="anchorageRecommendations" style="margin-top:10px;"></div>
 
-        <label style="display:block; margin-top:12px; font-size:12px;">Restaurants proches:</label>
+        <label id="nearbyRestaurantsLabel" style="display:block; margin-top:12px; font-size:12px;">Restaurants proches:</label>
         <div id="nearbyRestaurants"></div>
 
-        <label style="display:block; margin-top:12px; font-size:12px;">Magasins / courses:</label>
+        <label id="nearbyShopsLabel" style="display:block; margin-top:12px; font-size:12px;">Magasins / courses:</label>
         <div id="nearbyShops"></div>
     </div>
 
@@ -358,12 +361,16 @@
             <button id="cancelWaypointPhotoEditBtn" style="flex:1; margin-top:8px; display:none;">Annuler modification</button>
         </div>
 
-        <label style="display:block; margin-top:12px; font-size:12px;">Mouillages enregistrés:</label>
+        <label id="waypointSavedAnchoragesLabel" style="display:block; margin-top:12px; font-size:12px;">Mouillages enregistrés:</label>
         <div id="waypointPhotoList"></div>
     </div>
 
     <div class="sidebar-footer">
         <span class="creator-credit">Programa creado por Max Patissier</span>
+        <div class="lang-switch" aria-label="Sélecteur de langue">
+            <button id="langFrBtn" class="lang-btn" type="button">FR</button>
+            <button id="langEsBtn" class="lang-btn" type="button">ES</button>
+        </div>
         <a id="helpFab" href="help.html" target="_blank" rel="noopener" title="Ayuda">❓ HELP</a>
     </div>
 </div>
