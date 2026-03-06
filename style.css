@@ -144,6 +144,11 @@ body {
     margin-bottom: 8px;
 }
 
+.waypoint-dock-panel__search {
+    margin-top: 0;
+    margin-bottom: 10px;
+}
+
 .waypoint-dock-panel__list .waypoint-photo-card {
     margin-top: 0;
     margin-bottom: 8px;
@@ -742,6 +747,96 @@ button:focus-visible {
     margin-top: 6px;
     border-radius: 8px;
     object-fit: cover;
+}
+
+.google-photos-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 4600;
+    background: rgba(4, 8, 14, 0.72);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 14px;
+    box-sizing: border-box;
+}
+
+.google-photos-modal__card {
+    width: min(980px, 96vw);
+    max-height: min(88vh, 820px);
+    overflow: auto;
+    border-radius: 12px;
+    border: 1px solid rgba(143, 231, 255, 0.32);
+    background: rgba(12, 22, 34, 0.97);
+    padding: 12px;
+}
+
+.google-photos-modal__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.google-photos-modal__status {
+    margin-top: 8px;
+    font-size: 12px;
+    opacity: 0.92;
+}
+
+.google-photos-modal__grid {
+    margin-top: 10px;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.google-photos-item {
+    margin: 0;
+    width: 100%;
+    min-width: 0;
+    padding: 6px;
+    border-radius: 8px;
+    border: 1px solid rgba(143, 231, 255, 0.2);
+    background: rgba(18, 38, 58, 0.9);
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.google-photos-item img {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    border-radius: 6px;
+    object-fit: cover;
+}
+
+.google-photos-item span {
+    display: block;
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.google-photos-item small {
+    display: block;
+    font-size: 10px;
+    opacity: 0.78;
+}
+
+.google-photos-modal__empty {
+    grid-column: 1 / -1;
+    padding: 8px;
+    font-size: 12px;
+    opacity: 0.9;
+}
+
+@media (max-width: 900px) {
+    .google-photos-modal__grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
 }
 
 .maintenance-controls {

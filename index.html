@@ -10,12 +10,13 @@
     <link rel="icon" type="image/jpeg" href="ceibo-favicon.jpg">
 
     <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
-    <link rel="stylesheet" href="style.css?v=20260306-21"/>
+    <link rel="stylesheet" href="style.css?v=20260306-22"/>
     <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
     <script src="https://unpkg.com/leaflet-image@0.4.0/leaflet-image.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/exifr/dist/full.umd.js"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
 
@@ -295,6 +296,7 @@
         <input type="file" id="waypointPhotoInput" accept="image/*" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
         <div class="button-row">
             <button id="waypointQuickCaptureBtn" type="button" style="flex:1; margin-top:8px;">📷 Prendre photo (WP auto)</button>
+            <button id="waypointImportGooglePhotosBtn" type="button" style="flex:1; margin-top:8px;">Google Photos</button>
         </div>
         <input type="file" id="waypointQuickCaptureInput" accept="image/*" capture="environment" style="display:none;">
         <div id="waypointPhotoStatus" style="margin-top:6px; font-size:12px; opacity:0.9;">Coordonnées: en attente d'une photo</div>
@@ -556,6 +558,7 @@
     <div id="map"></div>
     <aside id="waypointDockPanel" class="waypoint-dock-panel">
         <div id="waypointSavedAnchoragesDockLabel" class="waypoint-dock-panel__title">Mouillages enregistrés:</div>
+        <input id="waypointSearchInput" class="route-search-input waypoint-dock-panel__search" type="search" placeholder="Recherche tags/commentaires..." autocomplete="off">
         <div id="waypointPhotoListDock" class="waypoint-dock-panel__list"></div>
     </aside>
 </div>
@@ -583,6 +586,20 @@
             <button id="aiTrafficCloseBtn" type="button">Fermer</button>
         </div>
         <div id="aiTrafficList" class="ai-traffic-list"></div>
+    </div>
+</div>
+
+<div id="googlePhotosPickerModal" class="google-photos-modal" style="display:none;">
+    <div class="google-photos-modal__card">
+        <div class="google-photos-modal__header">
+            <strong id="googlePhotosModalTitle">Importer depuis Google Photos</strong>
+            <button id="googlePhotosCloseBtn" type="button">Fermer</button>
+        </div>
+        <div id="googlePhotosPickerStatus" class="google-photos-modal__status">Connexion Google en attente...</div>
+        <div id="googlePhotosPickerGrid" class="google-photos-modal__grid"></div>
+        <div class="button-row">
+            <button id="googlePhotosLoadMoreBtn" type="button" style="display:none;">Charger plus</button>
+        </div>
     </div>
 </div>
 

@@ -2,7 +2,7 @@ import { routeSegment, distanceNm, getBearing, computeTWA, movePoint } from './p
 import { feature as topojsonFeature } from 'https://cdn.jsdelivr.net/npm/topojson-client@3/+esm';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const APP_BUILD_VERSION = '20260305-20';
+const APP_BUILD_VERSION = '20260306-22';
 
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -77,6 +77,7 @@ const CLOUD_TABLE_NAME = 'ceibo_route_collections';
 const CLOUD_ALLOWED_USERS_TABLE = 'allowed_users';
 const CLOUD_AUTO_PULL_INTERVAL_MS = 45000;
 const CLOUD_LOGBOOK_PUSH_DEBOUNCE_MS = 12000;
+const GOOGLE_PHOTOS_CLIENT_ID_STORAGE_KEY = 'ceiboGooglePhotosClientIdV1';
 let savedRoutesCache = [];
 let cloudClient = null;
 let cloudConfig = null;
@@ -122,6 +123,7 @@ let activeMaintenanceExpensesView = 'list';
 let activeRoutesSubtab = 'manage';
 let routesSortOrder = 'asc';
 let routesSearchTerm = '';
+let waypointSearchTerm = '';
 let maintenanceExpensesCloudDirty = false;
 let maintenanceExpensesSyncInFlight = false;
 let maintenanceExpensesLastLocalMutationAt = 0;
@@ -130,6 +132,10 @@ let maintenanceSuppliersCloudDirty = false;
 let maintenanceSuppliersSyncInFlight = false;
 let maintenanceSuppliersLastLocalMutationAt = 0;
 let protectedDataLoaded = false;
+let googlePhotosAccessToken = '';
+let googlePhotosTokenExpiryMs = 0;
+let googlePhotosPickerItems = [];
+let googlePhotosPickerNextPageToken = '';
 let overpassLastRequestAt = 0;
 const overpassQueryCache = new Map();
 const overpassEndpointCooldownUntil = new Map();
@@ -414,6 +420,10 @@ function applyLanguageToUi() {
     setElementText('#saveWaypointPhotoBtn', t('Ajouter ce waypoint photo', 'Añadir este waypoint foto'));
     setElementText('#cancelWaypointPhotoEditBtn', t('Annuler modification', 'Cancelar edición'));
     setElementText('#waypointQuickCaptureBtn', t('📷 Prendre photo (WP auto)', '📷 Tomar foto (WP auto)'));
+    setElementText('#waypointImportGooglePhotosBtn', t('Google Photos', 'Google Photos'));
+    setElementText('#googlePhotosModalTitle', t('Importer depuis Google Photos', 'Importar desde Google Photos'));
+    setElementText('#googlePhotosCloseBtn', t('Fermer', 'Cerrar'));
+    setElementText('#googlePhotosLoadMoreBtn', t('Charger plus', 'Cargar mas'));
     setElementText('#waypointPhotoStatus', t("Coordonnées: en attente d'une photo", 'Coordenadas: esperando una foto'));
     setElementText('#waypointGoogleMapLink', t('Ouvrir dans Google Maps', 'Abrir en Google Maps'));
     setElementText('label[for="waypointPlaceNameInput"]', t('Nom du lieu:', 'Nombre del lugar:'));
@@ -424,6 +434,7 @@ function applyLanguageToUi() {
     setElementText('label[for="waypointDepthInput"]', t('Profondeur:', 'Profundidad:'));
     setElementText('label[for="waypointBottomTypeInput"]', t('Type de fond:', 'Tipo de fondo:'));
     setElementText('#waypointSavedAnchoragesDockLabel', t('Mouillages enregistrés:', 'Fondeos guardados:'));
+    setElementPlaceholder('#waypointSearchInput', t('Recherche tags/commentaires...', 'Buscar tags/comentarios...'));
 
     setElementText('label[for="maintenanceSchemaNameInput"]', t('Nom du schéma:', 'Nombre del esquema:'));
     setElementPlaceholder('#maintenanceSchemaNameInput', t('Ex: Compartiment moteur', 'Ej: Compartimento motor'));
@@ -1545,6 +1556,223 @@ async function imageFileToCompressedDataUrl(file, maxSide = 720, quality = 0.68)
     });
 }
 
+function getStoredGooglePhotosClientId() {
+    return String(localStorage.getItem(GOOGLE_PHOTOS_CLIENT_ID_STORAGE_KEY) || '').trim();
+}
+
+function setStoredGooglePhotosClientId(clientId) {
+    const safeValue = String(clientId || '').trim();
+    if (!safeValue) {
+        localStorage.removeItem(GOOGLE_PHOTOS_CLIENT_ID_STORAGE_KEY);
+        return;
+    }
+    localStorage.setItem(GOOGLE_PHOTOS_CLIENT_ID_STORAGE_KEY, safeValue);
+}
+
+function ensureGooglePhotosClientId() {
+    let clientId = getStoredGooglePhotosClientId();
+    if (clientId) return clientId;
+
+    const entered = window.prompt(t(
+        'Entre ton Google OAuth Client ID (Web) pour Google Photos:',
+        'Introduce tu Google OAuth Client ID (Web) para Google Photos:'
+    ));
+    clientId = String(entered || '').trim();
+    if (!clientId) return '';
+    setStoredGooglePhotosClientId(clientId);
+    return clientId;
+}
+
+function buildGooglePhotosOAuthHelpMessage(error) {
+    const raw = String(error?.message || error || '');
+    const lower = raw.toLowerCase();
+    const origin = String(window.location.origin || '');
+
+    if (
+        lower.includes('generaloauthflow') ||
+        lower.includes('invalid_client') ||
+        lower.includes('origin') ||
+        lower.includes('redirect_uri') ||
+        lower.includes('unauthorized') ||
+        lower.includes('access_denied') ||
+        lower.includes('idpiframe')
+    ) {
+        return t(
+            `Vérifie Google Cloud: 1) OAuth Client ID de type Web, 2) origine autorisée = ${origin}, 3) API Google Photos Library activée, 4) écran de consentement configuré + ton email dans les testeurs si app en mode test.`,
+            `Verifica Google Cloud: 1) OAuth Client ID tipo Web, 2) origen autorizado = ${origin}, 3) API Google Photos Library activada, 4) pantalla de consentimiento configurada + tu email en testers si la app está en modo prueba.`
+        );
+    }
+
+    if (lower.includes('popup_closed')) {
+        return t('Fenêtre Google fermée avant validation.', 'Ventana de Google cerrada antes de validar.');
+    }
+
+    if (lower.includes('popup_failed_to_open')) {
+        return t('Popup bloquée: autorise les popups pour ce site.', 'Popup bloqueada: permite popups para este sitio.');
+    }
+
+    return t('Vérifie la configuration OAuth Google Photos.', 'Verifica la configuración OAuth de Google Photos.');
+}
+
+function setGooglePhotosPickerStatus(message, isError = false) {
+    const status = document.getElementById('googlePhotosPickerStatus');
+    if (!status) return;
+    status.textContent = String(message || '');
+    status.style.color = isError ? '#ffadad' : '';
+}
+
+function closeGooglePhotosPickerModal() {
+    const modal = document.getElementById('googlePhotosPickerModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function renderGooglePhotosPickerGrid(items) {
+    const grid = document.getElementById('googlePhotosPickerGrid');
+    if (!grid) return;
+
+    if (!Array.isArray(items) || !items.length) {
+        grid.innerHTML = `<div class="google-photos-modal__empty">${t('Aucune photo trouvée.', 'No se encontraron fotos.')}</div>`;
+        return;
+    }
+
+    grid.innerHTML = items.map((item, index) => {
+        const thumb = `${String(item.baseUrl || '')}=w260-h260-c`;
+        const name = escapeHtml(String(item.filename || `Photo ${index + 1}`));
+        const when = item.mediaMetadata?.creationTime
+            ? new Date(item.mediaMetadata.creationTime).toLocaleDateString(getCurrentLocale())
+            : '';
+        return `<button type="button" class="google-photos-item" data-photo-index="${index}" title="${name}">
+            <img src="${thumb}" alt="${name}">
+            <span>${name}</span>
+            <small>${escapeHtml(when)}</small>
+        </button>`;
+    }).join('');
+}
+
+async function requestGooglePhotosAccessToken({ forceConsent = false } = {}) {
+    if (googlePhotosAccessToken && Date.now() < googlePhotosTokenExpiryMs - 5000) {
+        return googlePhotosAccessToken;
+    }
+
+    const clientId = ensureGooglePhotosClientId();
+    if (!clientId) throw new Error(t('Client ID Google manquant.', 'Falta Google Client ID.'));
+
+    const oauth2 = window.google?.accounts?.oauth2;
+    if (!oauth2?.initTokenClient) {
+        throw new Error(t('SDK Google non chargé.', 'SDK de Google no cargado.'));
+    }
+
+    return new Promise((resolve, reject) => {
+        const tokenClient = oauth2.initTokenClient({
+            client_id: clientId,
+            scope: 'https://www.googleapis.com/auth/photoslibrary.readonly',
+            callback: (response) => {
+                if (!response || response.error || !response.access_token) {
+                    reject(new Error(String(response?.error || 'oauth_failed')));
+                    return;
+                }
+
+                const expiresInSec = Math.max(30, Number(response.expires_in || 3600));
+                googlePhotosAccessToken = String(response.access_token);
+                googlePhotosTokenExpiryMs = Date.now() + (expiresInSec * 1000);
+                resolve(googlePhotosAccessToken);
+            },
+            error_callback: (oauthError) => {
+                const reason = String(oauthError?.type || oauthError?.message || 'oauth_popup_error');
+                reject(new Error(reason));
+            }
+        });
+
+        tokenClient.requestAccessToken({ prompt: forceConsent ? 'consent' : '' });
+    });
+}
+
+async function fetchGooglePhotosMediaItems(pageToken = '') {
+    const token = await requestGooglePhotosAccessToken();
+    const body = {
+        pageSize: 36,
+        ...(pageToken ? { pageToken } : {})
+    };
+
+    const response = await fetch('https://photoslibrary.googleapis.com/v1/mediaItems:search', {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+    });
+
+    if (!response.ok) {
+        const details = await response.text();
+        throw new Error(`Google Photos ${response.status}: ${details.slice(0, 180)}`);
+    }
+
+    const data = await response.json();
+    const items = Array.isArray(data?.mediaItems)
+        ? data.mediaItems.filter(item => item?.mimeType?.startsWith('image/') && item?.baseUrl)
+        : [];
+
+    return {
+        items,
+        nextPageToken: String(data?.nextPageToken || '')
+    };
+}
+
+async function importGooglePhotoItemIntoWaypoint(item) {
+    if (!item?.baseUrl) throw new Error('photo_invalid');
+
+    setGooglePhotosPickerStatus(t('Import de la photo Google en cours...', 'Importando foto de Google...'));
+
+    const imageUrl = `${String(item.baseUrl)}=w2000-h2000`;
+    const response = await fetch(imageUrl);
+    if (!response.ok) {
+        throw new Error(`download_${response.status}`);
+    }
+
+    const blob = await response.blob();
+    const mimeType = String(blob.type || 'image/jpeg');
+    const fileName = String(item.filename || `google-photo-${Date.now()}.jpg`);
+    const file = new File([blob], fileName, { type: mimeType });
+
+    await handleWaypointPhotoInputChange({ target: { files: [file] } });
+    closeGooglePhotosPickerModal();
+    setGooglePhotosPickerStatus('');
+
+    const status = document.getElementById('waypointPhotoStatus');
+    if (status) {
+        status.textContent = t('Photo Google importée: complète les infos puis sauvegarde le waypoint.', 'Foto Google importada: completa datos y guarda el waypoint.');
+    }
+}
+
+async function openGooglePhotosPickerModal() {
+    const modal = document.getElementById('googlePhotosPickerModal');
+    const loadMoreBtn = document.getElementById('googlePhotosLoadMoreBtn');
+    if (!modal) return;
+
+    modal.style.display = 'flex';
+    setGooglePhotosPickerStatus(t('Connexion Google Photos...', 'Conectando con Google Photos...'));
+
+    try {
+        const { items, nextPageToken } = await fetchGooglePhotosMediaItems('');
+        googlePhotosPickerItems = items;
+        googlePhotosPickerNextPageToken = nextPageToken;
+        renderGooglePhotosPickerGrid(googlePhotosPickerItems);
+
+        if (loadMoreBtn) {
+            loadMoreBtn.style.display = googlePhotosPickerNextPageToken ? '' : 'none';
+        }
+
+        setGooglePhotosPickerStatus(t(`Photos disponibles: ${items.length}`, `Fotos disponibles: ${items.length}`));
+    } catch (error) {
+        const reason = String(error?.message || error);
+        const help = buildGooglePhotosOAuthHelpMessage(error);
+        setGooglePhotosPickerStatus(`${t('Connexion Google Photos impossible', 'No se puede conectar con Google Photos')}: ${reason}. ${help}`, true);
+        const loadMore = document.getElementById('googlePhotosLoadMoreBtn');
+        if (loadMore) loadMore.style.display = 'none';
+    }
+}
+
 function estimateDataUrlSizeBytes(dataUrl) {
     const raw = String(dataUrl || '');
     const commaIndex = raw.indexOf(',');
@@ -1716,8 +1944,27 @@ function renderWaypointPhotoList() {
     const dockTitle = document.getElementById('waypointSavedAnchoragesDockLabel');
     if (!container) return;
 
+    const searchTerm = waypointSearchTerm.trim().toLowerCase();
+    const filteredEntries = searchTerm
+        ? waypointPhotoEntries.filter(entry => {
+            const searchBlob = [
+                entry.placeName,
+                entry.comment,
+                entry.bottomType,
+                formatProtectionList(entry.protection),
+                Number.isFinite(entry.lat) ? entry.lat.toFixed(4) : '',
+                Number.isFinite(entry.lng) ? entry.lng.toFixed(4) : ''
+            ].join(' ').toLowerCase();
+
+            return searchBlob.includes(searchTerm);
+        })
+        : waypointPhotoEntries;
+
     if (dockTitle) {
-        dockTitle.textContent = `${t('Mouillages enregistrés', 'Fondeos guardados')}: ${waypointPhotoEntries.length}`;
+        const countLabel = searchTerm
+            ? `${filteredEntries.length}/${waypointPhotoEntries.length}`
+            : `${waypointPhotoEntries.length}`;
+        dockTitle.textContent = `${t('Mouillages enregistrés', 'Fondeos guardados')}: ${countLabel}`;
     }
 
     if (!waypointPhotoEntries.length) {
@@ -1725,7 +1972,12 @@ function renderWaypointPhotoList() {
         return;
     }
 
-    container.innerHTML = waypointPhotoEntries.map(entry => {
+    if (!filteredEntries.length) {
+        container.innerHTML = `<div class="arrival-list__item">${t('Aucun mouillage trouvé pour cette recherche.', 'No hay fondeos para esta búsqueda.')}</div>`;
+        return;
+    }
+
+    container.innerHTML = filteredEntries.map(entry => {
         const title = entry.placeName ? escapeHtml(entry.placeName) : t('Mouillage sans nom', 'Fondeo sin nombre');
         const bottom = entry.bottomType ? `<div>${t('Fond', 'Fondo')}: ${escapeHtml(entry.bottomType)}</div>` : '';
         const comment = entry.comment ? `<div style="margin-top:4px;">${escapeHtml(entry.comment)}</div>` : '';
@@ -7436,9 +7688,70 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     const waypointQuickCaptureBtn = document.getElementById('waypointQuickCaptureBtn');
     const waypointQuickCaptureInput = document.getElementById('waypointQuickCaptureInput');
+    const waypointImportGooglePhotosBtn = document.getElementById('waypointImportGooglePhotosBtn');
+    const googlePhotosCloseBtn = document.getElementById('googlePhotosCloseBtn');
+    const googlePhotosLoadMoreBtn = document.getElementById('googlePhotosLoadMoreBtn');
+    const googlePhotosPickerGrid = document.getElementById('googlePhotosPickerGrid');
+    const googlePhotosPickerModal = document.getElementById('googlePhotosPickerModal');
     if (waypointQuickCaptureBtn && waypointQuickCaptureInput) {
         waypointQuickCaptureBtn.addEventListener('click', () => waypointQuickCaptureInput.click());
         waypointQuickCaptureInput.addEventListener('change', handleQuickWaypointCaptureChange);
+    }
+
+    if (waypointImportGooglePhotosBtn) {
+        waypointImportGooglePhotosBtn.addEventListener('click', () => {
+            void openGooglePhotosPickerModal();
+        });
+    }
+
+    if (googlePhotosCloseBtn) {
+        googlePhotosCloseBtn.addEventListener('click', () => closeGooglePhotosPickerModal());
+    }
+
+    if (googlePhotosPickerModal) {
+        googlePhotosPickerModal.addEventListener('click', event => {
+            if (event.target === googlePhotosPickerModal) {
+                closeGooglePhotosPickerModal();
+            }
+        });
+    }
+
+    if (googlePhotosLoadMoreBtn) {
+        googlePhotosLoadMoreBtn.addEventListener('click', async () => {
+            if (!googlePhotosPickerNextPageToken) return;
+            googlePhotosLoadMoreBtn.disabled = true;
+            setGooglePhotosPickerStatus(t('Chargement des photos...', 'Cargando fotos...'));
+
+            try {
+                const { items, nextPageToken } = await fetchGooglePhotosMediaItems(googlePhotosPickerNextPageToken);
+                googlePhotosPickerItems = [...googlePhotosPickerItems, ...items];
+                googlePhotosPickerNextPageToken = nextPageToken;
+                renderGooglePhotosPickerGrid(googlePhotosPickerItems);
+                googlePhotosLoadMoreBtn.style.display = googlePhotosPickerNextPageToken ? '' : 'none';
+                setGooglePhotosPickerStatus(t(`Photos disponibles: ${googlePhotosPickerItems.length}`, `Fotos disponibles: ${googlePhotosPickerItems.length}`));
+            } catch (error) {
+                setGooglePhotosPickerStatus(`${t('Chargement impossible', 'Carga imposible')}: ${String(error?.message || error)}`, true);
+            } finally {
+                googlePhotosLoadMoreBtn.disabled = false;
+            }
+        });
+    }
+
+    if (googlePhotosPickerGrid) {
+        googlePhotosPickerGrid.addEventListener('click', event => {
+            const target = event.target;
+            if (!(target instanceof HTMLElement)) return;
+            const button = target.closest('.google-photos-item');
+            if (!button) return;
+
+            const indexRaw = button.getAttribute('data-photo-index');
+            const index = Number(indexRaw);
+            if (!Number.isInteger(index) || index < 0 || index >= googlePhotosPickerItems.length) return;
+
+            void importGooglePhotoItemIntoWaypoint(googlePhotosPickerItems[index]).catch(error => {
+                setGooglePhotosPickerStatus(`${t('Import photo impossible', 'Importacion de foto imposible')}: ${String(error?.message || error)}`, true);
+            });
+        });
     }
 
     const saveWaypointPhotoBtn = document.getElementById('saveWaypointPhotoBtn');
@@ -7793,6 +8106,14 @@ document.addEventListener('DOMContentLoaded', async function() {
         routeSearchInput.addEventListener('input', (e) => {
             routesSearchTerm = e.target.value;
             refreshSavedList();
+        });
+    }
+
+    const waypointSearchInput = document.getElementById('waypointSearchInput');
+    if (waypointSearchInput) {
+        waypointSearchInput.addEventListener('input', (e) => {
+            waypointSearchTerm = String(e.target?.value || '');
+            renderWaypointPhotoList();
         });
     }
 
