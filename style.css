@@ -639,10 +639,17 @@ button:focus-visible {
     width: auto;
     flex: 1;
     font-size: 12px;
+    background: #0d7377;
+    border-color: #0a5c5f;
+}
+
+.maintenance-subtab-btn:hover {
+    background: #0e8489;
 }
 
 .maintenance-subtab-btn.active {
-    background: #ff9a3a;
+    background: #c92a2a;
+    border-color: #a61e1e;
 }
 
 .maintenance-expense-subtabs {
@@ -701,8 +708,30 @@ button:focus-visible {
 }
 
 .page-subtab-btn.active {
-    background: #d946a6;
-    border-color: #b4358a;
+    background: #c92a2a;
+    border-color: #a61e1e;
+}
+
+/* Unified color for add/create actions across secondary flows */
+#addManualNavLogBtn,
+#saveWaypointPhotoBtn,
+#maintenanceAddSchemaBtn,
+#maintenanceAddExpenseBtn,
+#maintenanceSupplierNewBtn,
+#maintenanceAddSupplierBtn,
+#saveEngineLogBtn {
+    background: #1f9d55;
+    border-color: #188346;
+}
+
+#addManualNavLogBtn:hover,
+#saveWaypointPhotoBtn:hover,
+#maintenanceAddSchemaBtn:hover,
+#maintenanceAddExpenseBtn:hover,
+#maintenanceSupplierNewBtn:hover,
+#maintenanceAddSupplierBtn:hover,
+#saveEngineLogBtn:hover {
+    background: #25b562;
 }
 
 .page-subpanel {
