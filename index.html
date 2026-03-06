@@ -152,19 +152,15 @@
             <input type="hidden" id="cloudUrlInput" value="https://wtavqhpntfnsklbniqzf.supabase.co">
             <input type="hidden" id="cloudAnonKeyInput" value="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind0YXZxaHBudGZuc2tsYm5pcXpmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI2NjkwNzMsImV4cCI6MjA4ODI0NTA3M30.v4T63RWtSjCHBGM5y4nFKdONpteviLSer-P_8vWAY68">
             <input type="hidden" id="cloudProjectKeyInput" value="ceibo-main">
-            <div class="button-row">
+            <div class="button-row cloud-actions-row">
                 <button id="cloudRefreshBtn" style="flex:1;">Rafraîchir cloud</button>
+                <button id="cloudEmailSignInBtn" style="flex:1;">Se connecter email</button>
+                <button id="cloudEmailSignUpBtn" style="flex:1;">Créer compte</button>
+                <button id="cloudSignOutBtn" style="flex:1;">Se déconnecter</button>
             </div>
             <div class="cloud-config-title" style="margin-top:10px;">Compte utilisateur (Email + mot de passe)</div>
             <input type="email" id="cloudEmailInput" placeholder="Email utilisateur" class="cloud-input" autocomplete="username">
             <input type="password" id="cloudUserPasswordInput" placeholder="Mot de passe utilisateur" class="cloud-input" autocomplete="current-password">
-            <div class="button-row">
-                <button id="cloudEmailSignInBtn" style="flex:1;">Se connecter email</button>
-                <button id="cloudEmailSignUpBtn" style="flex:1;">Créer compte</button>
-            </div>
-            <div class="button-row">
-                <button id="cloudSignOutBtn" style="flex:1;">Se déconnecter</button>
-            </div>
             <div id="cloudAuthStatus" class="cloud-status">Utilisateur: non connecté</div>
             <div id="cloudStatus" class="cloud-status">Mode local (pas de cloud configuré)</div>
             <div id="cloudDataSourceStatus" class="cloud-status">Données routes/photos: en attente</div>

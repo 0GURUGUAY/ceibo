@@ -315,6 +315,17 @@ body {
     width: auto;
 }
 
+.cloud-actions-row {
+    flex-wrap: nowrap;
+}
+
+.cloud-actions-row button {
+    flex: 1 1 0 !important;
+    min-width: 0;
+    padding: 7px 6px;
+    font-size: 11px;
+}
+
 .cloud-config-card {
     margin-top: 10px;
     padding: 8px;
