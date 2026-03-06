@@ -303,8 +303,16 @@ body {
 
 .button-row {
     display: flex;
+    flex-wrap: wrap;
+    align-items: center;
     gap: 8px;
     margin-top: 8px;
+}
+
+.button-row button {
+    margin-top: 0;
+    flex: 0 1 130px !important;
+    width: auto;
 }
 
 .cloud-config-card {
@@ -381,12 +389,16 @@ body {
 }
 
 button {
-    width: 100%;
+    width: auto;
+    min-width: 110px;
     padding: 8px 10px;
     margin-top: 8px;
     background: #ff7b00;
     border: 1px solid #e56f00;
     border-radius: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     color: white;
     font-weight: 600;
     font-size: 13px;
