@@ -98,11 +98,82 @@ body {
     border-color: rgba(143, 231, 255, 0.85);
 }
 
-#map {
+#mapWorkspace {
     flex: 1;
     height: 100%;
     min-width: 0;
+    display: flex;
+    gap: 10px;
+    padding: 10px;
+    box-sizing: border-box;
+    background: #0e141d;
+}
+
+#map {
+    flex: 1 1 62%;
+    height: 100%;
+    min-width: 0;
     position: relative;
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.waypoint-dock-panel {
+    display: none;
+    flex: 1 1 38%;
+    min-width: 230px;
+    max-width: 420px;
+    height: 100%;
+    overflow: auto;
+    border-radius: 12px;
+    border: 1px solid rgba(143, 231, 255, 0.28);
+    background: rgba(12, 25, 40, 0.92);
+    padding: 10px;
+    box-sizing: border-box;
+}
+
+.waypoint-dock-panel.is-visible {
+    display: block;
+}
+
+.waypoint-dock-panel__title {
+    font-size: 12px;
+    font-weight: 700;
+    color: #d9f4ff;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+    margin-bottom: 8px;
+}
+
+.waypoint-dock-panel__list .waypoint-photo-card {
+    margin-top: 0;
+    margin-bottom: 8px;
+    color: #eef8ff;
+    background: rgba(16, 33, 52, 0.92);
+    border-color: rgba(143, 231, 255, 0.22);
+}
+
+.waypoint-dock-panel__list .waypoint-photo-card strong {
+    color: #eaf8ff;
+}
+
+.waypoint-dock-panel__list .waypoint-photo-card__img {
+    width: 84px;
+    height: 84px;
+    max-height: none;
+    margin-top: 6px;
+    border-radius: 8px;
+    object-fit: cover;
+}
+
+@media (max-width: 1100px) {
+    #mapWorkspace {
+        padding: 6px;
+        gap: 6px;
+    }
+
+    .waypoint-dock-panel {
+        min-width: 210px;
+    }
 }
 
 #maintenanceMapPanel {
@@ -261,6 +332,24 @@ body {
     display: block;
 }
 
+body.auth-locked #sidebar .tab-panel:not(#cloudTab) {
+    opacity: 0.45;
+    filter: grayscale(0.7);
+}
+
+body.auth-locked #sidebar .tab-panel:not(#cloudTab) button,
+body.auth-locked #sidebar .tab-panel:not(#cloudTab) input,
+body.auth-locked #sidebar .tab-panel:not(#cloudTab) select,
+body.auth-locked #sidebar .tab-panel:not(#cloudTab) textarea,
+body.auth-locked #map,
+body.auth-locked #waypointDockPanel {
+    pointer-events: none;
+}
+
+body.auth-locked #map {
+    opacity: 0.55;
+}
+
 .routing-control-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -320,6 +409,17 @@ body {
 }
 
 .cloud-actions-row button {
+    flex: 1 1 0 !important;
+    min-width: 0;
+    padding: 7px 6px;
+    font-size: 11px;
+}
+
+.weather-pointer-row {
+    flex-wrap: nowrap;
+}
+
+.weather-pointer-row button {
     flex: 1 1 0 !important;
     min-width: 0;
     padding: 7px 6px;
@@ -858,6 +958,15 @@ button:focus-visible {
 }
 
 .route-action-btn--delete {
+    width: 18px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    line-height: 1;
     background: rgba(201, 42, 42, 0.3);
     border-color: rgba(201, 42, 42, 0.5);
 }
@@ -927,13 +1036,31 @@ button:focus-visible {
     font-size: 12px;
 }
 
-#maintenancePinColorInput {
+#maintenancePinColorInput,
+#maintenanceTaskStatusInput {
     width: 190px;
     height: 36px;
-    padding: 0 8px;
+    padding: 0 34px 0 10px;
     border: 1px solid rgba(255, 255, 255, 0.2);
     border-radius: 8px;
     background: rgba(255, 255, 255, 0.98);
+    color: #0f2236;
+    font-size: 12px;
+    font-weight: 600;
+    -webkit-appearance: none;
+    appearance: none;
+    background-image: linear-gradient(45deg, transparent 50%, #245a85 50%), linear-gradient(135deg, #245a85 50%, transparent 50%);
+    background-position: calc(100% - 17px) 14px, calc(100% - 12px) 14px;
+    background-size: 6px 6px, 6px 6px;
+    background-repeat: no-repeat;
+}
+
+#maintenancePinColorInput:focus,
+#maintenanceTaskStatusInput:focus,
+.maintenance-status-select:focus {
+    outline: none;
+    border-color: rgba(143, 231, 255, 0.85);
+    box-shadow: 0 0 0 3px rgba(143, 231, 255, 0.18);
 }
 
 .maintenance-canvas {
@@ -1332,9 +1459,20 @@ button:focus-visible {
 .maintenance-status-select {
     width: auto;
     margin-top: 0;
+    height: 30px;
+    padding: 0 30px 0 10px;
     border-radius: 8px;
     border: 1px solid rgba(255, 255, 255, 0.25);
     background: rgba(255, 255, 255, 0.96);
+    color: #0f2236;
+    font-size: 12px;
+    font-weight: 600;
+    -webkit-appearance: none;
+    appearance: none;
+    background-image: linear-gradient(45deg, transparent 50%, #245a85 50%), linear-gradient(135deg, #245a85 50%, transparent 50%);
+    background-position: calc(100% - 15px) 12px, calc(100% - 10px) 12px;
+    background-size: 5px 5px, 5px 5px;
+    background-repeat: no-repeat;
 }
 
 .log-card,

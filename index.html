@@ -116,8 +116,6 @@
             <div class="button-row">
                 <button id="saveRouteBtn" style="flex:1;">Sauvegarder</button>
                 <button id="resetBtn" style="flex:1;">Reset</button>
-            </div>
-            <div class="button-row">
                 <button id="reverseRouteBtn" style="flex:1;">Route retour</button>
             </div>
 
@@ -179,6 +177,8 @@
                         <tr><th id="cloudStatsNavLabel">Entrées journal nav</th><td id="cloudStatsNavValue">0</td></tr>
                         <tr><th id="cloudStatsEngineLabel">Entrées moteur</th><td id="cloudStatsEngineValue">0</td></tr>
                         <tr class="cloud-stats-total"><th id="cloudStatsTotalLabel">Total enregistrements</th><td id="cloudStatsTotalValue">0</td></tr>
+                        <tr><th id="cloudStatsStorageLabel">Taille utilisée</th><td id="cloudStatsStorageValue">0 Mo</td></tr>
+                        <tr><th id="cloudStatsQuotaLabel">Quota utilisé (500 Mo)</th><td id="cloudStatsQuotaValue">0 %</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -252,11 +252,9 @@
     </div>
 
     <div id="weatherTab" class="tab-panel">
-        <div class="button-row">
+        <div class="button-row weather-pointer-row">
             <button id="placeWeatherPointerBtn" style="flex:1;">Placer pointeur météo</button>
             <button id="useMapCenterWeatherBtn" style="flex:1;">Centre carte → pointeur</button>
-        </div>
-        <div class="button-row">
             <button id="refreshWeatherOutlookBtn" style="flex:1;">Actualiser météo</button>
         </div>
         <div id="weatherApiConfigSection">
@@ -369,8 +367,6 @@
             <button id="cancelWaypointPhotoEditBtn" style="flex:1; margin-top:8px; display:none;">Annuler modification</button>
         </div>
 
-        <label id="waypointSavedAnchoragesLabel" style="display:block; margin-top:12px; font-size:12px;">Mouillages enregistrés:</label>
-        <div id="waypointPhotoList"></div>
     </div>
 
     <div id="maintenanceTab" class="tab-panel">
@@ -556,7 +552,13 @@
     </div>
 </div>
 
-<div id="map"></div>
+<div id="mapWorkspace">
+    <div id="map"></div>
+    <aside id="waypointDockPanel" class="waypoint-dock-panel">
+        <div id="waypointSavedAnchoragesDockLabel" class="waypoint-dock-panel__title">Mouillages enregistrés:</div>
+        <div id="waypointPhotoListDock" class="waypoint-dock-panel__list"></div>
+    </aside>
+</div>
 <div id="maintenanceMapPanel" style="display:none;">
     <div id="maintenanceCanvas" class="maintenance-canvas" title="Clique sur le schéma pour ajouter une pastille">
         <img id="maintenanceSchemaImage" alt="Schéma maintenance" style="display:none;">

@@ -215,18 +215,7 @@ function normalizeMapStyle(value) {
 }
 
 function isAuthRequiredRuntime() {
-    try {
-        const locationObj = window?.location;
-        const protocol = String(locationObj?.protocol || '').toLowerCase();
-        const hostname = String(locationObj?.hostname || '').toLowerCase();
-
-        if (protocol === 'file:') return false;
-        if (!hostname) return false;
-        if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') return false;
-        return true;
-    } catch (_error) {
-        return false;
-    }
+    return true;
 }
 
 function normalizeLanguage(language) {
@@ -374,6 +363,8 @@ function applyLanguageToUi() {
     setElementText('#cloudStatsNavLabel', t('Entrées journal nav', 'Entradas diario nav'));
     setElementText('#cloudStatsEngineLabel', t('Entrées moteur', 'Entradas motor'));
     setElementText('#cloudStatsTotalLabel', t('Total enregistrements', 'Total registros'));
+    setElementText('#cloudStatsStorageLabel', t('Taille utilisée', 'Tamaño usado'));
+    setElementText('#cloudStatsQuotaLabel', t('Quota utilisé (500 Mo)', 'Cuota usada (500 MB)'));
 
     setElementText('#startNavLogBtn', t('Démarrer log GPS', 'Iniciar log GPS'));
     setElementText('#stopNavLogBtn', t('Arrêter log GPS', 'Detener log GPS'));
@@ -432,7 +423,7 @@ function applyLanguageToUi() {
     setElementText('#waypointTab .waypoint-protection-item > label', t('Protection (rose des vents):', 'Protección (rosa de vientos):'));
     setElementText('label[for="waypointDepthInput"]', t('Profondeur:', 'Profundidad:'));
     setElementText('label[for="waypointBottomTypeInput"]', t('Type de fond:', 'Tipo de fondo:'));
-    setElementText('#waypointSavedAnchoragesLabel', t('Mouillages enregistrés:', 'Fondeos guardados:'));
+    setElementText('#waypointSavedAnchoragesDockLabel', t('Mouillages enregistrés:', 'Fondeos guardados:'));
 
     setElementText('label[for="maintenanceSchemaNameInput"]', t('Nom du schéma:', 'Nombre del esquema:'));
     setElementPlaceholder('#maintenanceSchemaNameInput', t('Ex: Compartiment moteur', 'Ej: Compartimento motor'));
@@ -641,6 +632,7 @@ async function applyAuthGateState({ clearWhenLocked = true } = {}) {
     const locked = isAuthGateLocked();
     const isInitialProtectedLoad = !protectedDataLoaded;
     setProtectedTabsEnabled(!locked);
+    document.body.classList.toggle('auth-locked', locked);
 
     if (locked) {
         if (activeTabName !== 'cloud') {
@@ -1553,6 +1545,50 @@ async function imageFileToCompressedDataUrl(file, maxSide = 720, quality = 0.68)
     });
 }
 
+function estimateDataUrlSizeBytes(dataUrl) {
+    const raw = String(dataUrl || '');
+    const commaIndex = raw.indexOf(',');
+    if (commaIndex === -1) return Math.max(0, raw.length);
+
+    const meta = raw.slice(0, commaIndex).toLowerCase();
+    const payload = raw.slice(commaIndex + 1);
+
+    if (!meta.includes(';base64')) {
+        try {
+            return new TextEncoder().encode(decodeURIComponent(payload)).length;
+        } catch (_error) {
+            return Math.max(0, payload.length);
+        }
+    }
+
+    const trimmed = payload.replace(/\s/g, '');
+    const padding = trimmed.endsWith('==') ? 2 : (trimmed.endsWith('=') ? 1 : 0);
+    return Math.max(0, Math.floor((trimmed.length * 3) / 4) - padding);
+}
+
+async function prepareDocumentForStorage(file, options = {}) {
+    const maxSide = Number(options.maxSide) > 0 ? Number(options.maxSide) : 1280;
+    const quality = Number(options.quality) > 0 ? Number(options.quality) : 0.55;
+    const originalMime = String(file?.type || '').toLowerCase();
+    const isImage = originalMime.startsWith('image/');
+
+    if (!isImage) {
+        const dataUrl = await imageFileToDataUrl(file);
+        return {
+            dataUrl,
+            mimeType: originalMime,
+            sizeBytes: Math.max(0, Number(file?.size || 0) || 0)
+        };
+    }
+
+    const dataUrl = await imageFileToCompressedDataUrl(file, maxSide, quality);
+    return {
+        dataUrl,
+        mimeType: 'image/jpeg',
+        sizeBytes: estimateDataUrlSizeBytes(dataUrl)
+    };
+}
+
 function buildWaypointPhotoPopupContent(entry, weatherHtml = '') {
     const title = entry.placeName ? escapeHtml(entry.placeName) : t('Mouillage noté', 'Fondeo valorado');
     const comment = entry.comment ? `<div style="margin-top:6px;">${escapeHtml(entry.comment)}</div>` : '';
@@ -1676,8 +1712,13 @@ function goToWaypointPhotoEntry(entry) {
 }
 
 function renderWaypointPhotoList() {
-    const container = document.getElementById('waypointPhotoList');
+    const container = document.getElementById('waypointPhotoListDock');
+    const dockTitle = document.getElementById('waypointSavedAnchoragesDockLabel');
     if (!container) return;
+
+    if (dockTitle) {
+        dockTitle.textContent = `${t('Mouillages enregistrés', 'Fondeos guardados')}: ${waypointPhotoEntries.length}`;
+    }
 
     if (!waypointPhotoEntries.length) {
         container.innerHTML = `<div class="arrival-list__item">${t('Aucun mouillage enregistré.', 'No hay fondeos guardados.')}</div>`;
@@ -4612,13 +4653,13 @@ function renderMaintenanceExpenseDetailPanel() {
         for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
             const file = files[fileIndex];
             try {
-                const dataUrl = await imageFileToDataUrl(file);
+                const preparedDoc = await prepareDocumentForStorage(file);
                 newDocs.push(sanitizeMaintenanceInvoiceDocument({
                     id: `expense-doc-${Date.now()}-${fileIndex}`,
                     name: file.name,
-                    dataUrl,
-                    mimeType: file.type,
-                    sizeBytes: file.size
+                    dataUrl: preparedDoc.dataUrl,
+                    mimeType: preparedDoc.mimeType,
+                    sizeBytes: preparedDoc.sizeBytes
                 }, fileIndex));
             } catch (_error) {
                 continue;
@@ -4833,13 +4874,13 @@ function renderMaintenanceSupplierDetailPanel() {
         for (let index = 0; index < files.length; index++) {
             const file = files[index];
             try {
-                const dataUrl = await imageFileToDataUrl(file);
+                const preparedDoc = await prepareDocumentForStorage(file);
                 documents.push(sanitizeMaintenanceInvoiceDocument({
                     id: `supplier-doc-${Date.now()}-${index}`,
                     name: file.name,
-                    dataUrl,
-                    mimeType: file.type,
-                    sizeBytes: file.size
+                    dataUrl: preparedDoc.dataUrl,
+                    mimeType: preparedDoc.mimeType,
+                    sizeBytes: preparedDoc.sizeBytes
                 }, index));
             } catch (_error) {
                 continue;
@@ -4880,13 +4921,13 @@ function renderMaintenanceSupplierDetailPanel() {
         for (let index = 0; index < files.length; index++) {
             const file = files[index];
             try {
-                const dataUrl = await imageFileToDataUrl(file);
+                const preparedDoc = await prepareDocumentForStorage(file);
                 newDocuments.push(sanitizeMaintenanceInvoiceDocument({
                     id: `supplier-doc-${Date.now()}-${index}`,
                     name: file.name,
-                    dataUrl,
-                    mimeType: file.type,
-                    sizeBytes: file.size
+                    dataUrl: preparedDoc.dataUrl,
+                    mimeType: preparedDoc.mimeType,
+                    sizeBytes: preparedDoc.sizeBytes
                 }, index));
             } catch (_error) {
                 continue;
@@ -6019,20 +6060,20 @@ function initializeMaintenanceFeature() {
         renderMaintenanceBoard();
     });
 
-    addBtn.addEventListener('click', () => {
+    addBtn.addEventListener('click', async () => {
         const file = schemaInput.files?.[0];
         if (!file || !file.type.startsWith('image/')) {
             setMaintenanceStatus(t('Choisis une image valide pour ajouter un schéma.', 'Elige una imagen válida para añadir un esquema.'), true);
             return;
         }
 
-        const reader = new FileReader();
-        reader.onload = () => {
+        try {
+            const imageDataUrl = await imageFileToCompressedDataUrl(file, 1400, 0.62);
             const boardName = String(schemaNameInput.value || '').trim() || `${t('Schéma', 'Esquema')} ${maintenanceBoards.length + 1}`;
             const newBoard = sanitizeMaintenanceBoard({
                 id: `maintenance-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
                 name: boardName,
-                imageDataUrl: String(reader.result || ''),
+                imageDataUrl,
                 annotations: []
             }, maintenanceBoards.length);
 
@@ -6044,8 +6085,9 @@ function initializeMaintenanceFeature() {
             setMaintenanceSchemaManagerVisibility(false);
             renderMaintenanceBoard();
             setMaintenanceStatus(t('Schéma ajouté. Clique sur l\'image pour poser une pastille.', 'Esquema añadido. Haz clic en la imagen para colocar un marcador.'));
-        };
-        reader.readAsDataURL(file);
+        } catch (_error) {
+            setMaintenanceStatus(t('Impossible de lire/comprimer cette image.', 'No se puede leer/comprimir esta imagen.'), true);
+        }
     });
 
     deleteBtn.addEventListener('click', () => {
@@ -6237,13 +6279,13 @@ function initializeMaintenanceFeature() {
         for (let fileIndex = 0; fileIndex < invoiceFiles.length; fileIndex++) {
             const file = invoiceFiles[fileIndex];
             try {
-                const dataUrl = await imageFileToDataUrl(file);
+                const preparedDoc = await prepareDocumentForStorage(file);
                 invoiceDocuments.push(sanitizeMaintenanceInvoiceDocument({
                     id: `expense-doc-${Date.now()}-${fileIndex}`,
                     name: file.name,
-                    dataUrl,
-                    mimeType: file.type,
-                    sizeBytes: file.size
+                    dataUrl: preparedDoc.dataUrl,
+                    mimeType: preparedDoc.mimeType,
+                    sizeBytes: preparedDoc.sizeBytes
                 }, fileIndex));
             } catch (_error) {
                 invoiceScanStatus.textContent = `${t('Impossible de lire le document', 'No se puede leer el documento')}: ${file.name}`;
@@ -7187,7 +7229,8 @@ document.addEventListener('DOMContentLoaded', async function() {
     const arrivalTab = document.getElementById('arrivalTab');
     const waypointTab = document.getElementById('waypointTab');
     const maintenanceTab = document.getElementById('maintenanceTab');
-    const mapContainer = document.getElementById('map');
+    const mapContainer = document.getElementById('mapWorkspace');
+    const waypointDockPanel = document.getElementById('waypointDockPanel');
     const maintenanceMapPanel = document.getElementById('maintenanceMapPanel');
     const maintenanceInvoicePreviewPanel = document.getElementById('maintenanceInvoicePreviewPanel');
 
@@ -7264,6 +7307,14 @@ document.addEventListener('DOMContentLoaded', async function() {
         waypointTab.classList.toggle('active', isWaypoint);
         maintenanceTab.classList.toggle('active', isMaintenance);
         setMaintenanceMapMode(isMaintenance);
+
+        if (waypointDockPanel) {
+            waypointDockPanel.classList.toggle('is-visible', isWaypoint && !isMaintenance);
+        }
+
+        if (isWaypoint) {
+            renderWaypointPhotoList();
+        }
 
         if (isWeather) {
             refreshWeatherOutlook();
@@ -7486,7 +7537,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         owmApiKeyInput.value = getStoredOpenWeatherTileAppId();
     }
 
-    setWeatherApiConfigVisibility(true);
+    setWeatherApiConfigVisibility(false, t('API météo connectée.', 'API meteo conectada.'));
 
     const storedOwmKey = getStoredOpenWeatherTileAppId();
     if (storedOwmKey) {
@@ -9137,6 +9188,35 @@ function getLocalizedCloudSourceLabel(sourceLabel) {
     return sourceLabelMap[safeSource] || safeSource;
 }
 
+function estimateCloudPayloadSizeBytes() {
+    const payload = {
+        version: 5,
+        routes: getSavedRoutes(),
+        waypointPhotos: waypointPhotoEntries,
+        maintenanceBoards,
+        maintenanceExpenses,
+        maintenanceSuppliers,
+        navLogEntries,
+        engineLogEntries
+    };
+
+    try {
+        return new TextEncoder().encode(JSON.stringify(payload)).length;
+    } catch (_error) {
+        return 0;
+    }
+}
+
+function formatStorageSize(bytes) {
+    const safeBytes = Math.max(0, Number(bytes) || 0);
+    const kb = safeBytes / 1024;
+    const mb = safeBytes / (1024 * 1024);
+
+    if (mb >= 1) return `${mb.toFixed(2)} Mo`;
+    if (kb >= 1) return `${kb.toFixed(1)} Ko`;
+    return `${safeBytes} o`;
+}
+
 function renderCloudStatsTable() {
     const sourceValue = document.getElementById('cloudStatsSourceValue');
     if (!sourceValue) return;
@@ -9149,6 +9229,9 @@ function renderCloudStatsTable() {
     const navCount = navLogEntries.length;
     const engineCount = engineLogEntries.length;
     const totalCount = routesCount + photosCount + boardsCount + expensesCount + suppliersCount + navCount + engineCount;
+    const storageBytes = estimateCloudPayloadSizeBytes();
+    const storageQuotaBytes = 500 * 1024 * 1024;
+    const storageQuotaPercent = Math.min(999, (storageBytes / storageQuotaBytes) * 100);
 
     sourceValue.textContent = getLocalizedCloudSourceLabel(cloudDataSourceLabel);
 
@@ -9165,6 +9248,8 @@ function renderCloudStatsTable() {
     setText('cloudStatsNavValue', navCount);
     setText('cloudStatsEngineValue', engineCount);
     setText('cloudStatsTotalValue', totalCount);
+    setText('cloudStatsStorageValue', formatStorageSize(storageBytes));
+    setText('cloudStatsQuotaValue', `${storageQuotaPercent.toFixed(2)} %`);
 }
 
 function updateCloudDataSourceStatus(sourceLabel, routeCount = null, photoCount = null) {
