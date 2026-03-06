@@ -87,6 +87,9 @@ let cloudAutoPullTimer = null;
 let cloudAutoPullInFlight = false;
 let cloudLogbookPushTimer = null;
 let cloudWhitelistCheckInFlight = false;
+let cloudLastSeenUpdatedAtMs = 0;
+let cloudDataSourceLabel = 'initialisation';
+let cloudLastStatusMessage = '';
 let navLogEntries = [];
 let navWatchId = null;
 let navLatestHeelDeg = null;
@@ -99,6 +102,8 @@ let aiTrafficAutoHideTimer = null;
 let weatherFocusMarker = null;
 let weatherFocusPoint = null;
 let weatherPointerPlacementMode = false;
+let mapWebOverlayElement = null;
+let mapWebOverlayFrame = null;
 let maintenanceBoards = [];
 let selectedMaintenanceBoardId = null;
 let activeMaintenanceAnnotationId = null;
@@ -114,10 +119,16 @@ let maintenanceLastScannedText = '';
 let selectedMaintenanceExpenseId = null;
 let selectedMaintenanceSupplierId = null;
 let activeMaintenanceExpensesView = 'list';
+let activeRoutesSubtab = 'manage';
+let routesSortOrder = 'asc';
+let routesSearchTerm = '';
 let maintenanceExpensesCloudDirty = false;
 let maintenanceExpensesSyncInFlight = false;
 let maintenanceExpensesLastLocalMutationAt = 0;
 let maintenanceExpensesLocalStorageFailed = false;
+let maintenanceSuppliersCloudDirty = false;
+let maintenanceSuppliersSyncInFlight = false;
+let maintenanceSuppliersLastLocalMutationAt = 0;
 let protectedDataLoaded = false;
 let overpassLastRequestAt = 0;
 const overpassQueryCache = new Map();
@@ -265,14 +276,17 @@ function applyLanguageToUi() {
     setElementText('label[for="routeNameInput"]', t('Nom de la route:', 'Nombre de la ruta:'));
     setElementPlaceholder('#routeNameInput', t('Nom de la route', 'Nombre de la ruta'));
     setElementText('#saveRouteBtn', t('Sauvegarder', 'Guardar'));
-    setElementText('#exportRouteBtn', t('Exporter', 'Exportar'));
+    setElementText('#exportRouteBtn', t('Exporter JSON', 'Exportar JSON'));
     setElementText('#exportRouteGpxBtn', t('Exporter GPX', 'Exportar GPX'));
     setElementText('#resetBtn', t('Reset', 'Reiniciar'));
     setElementText('#reverseRouteBtn', t('Route retour', 'Ruta retorno'));
     setElementText('#exportVoyagePdfBtn', t('Exporter rapport PDF', 'Exportar informe PDF'));
-    setElementText('label[for="savedRoutesSelect"]', t('Routes sauvegardées:', 'Rutas guardadas:'));
-    setElementText('#loadRouteBtn', t('Charger', 'Cargar'));
-    setElementText('#deleteRouteBtn', t('Supprimer', 'Eliminar'));
+    setElementText('#savedRoutesListLabel', t('Routes sauvegardées:', 'Rutas guardadas:'));
+    const routeSearchInput = document.getElementById('routeSearchInput');
+    if (routeSearchInput) routeSearchInput.placeholder = t('Rechercher une route...', 'Buscar una ruta...');
+    setElementText('#routesManageSubtabBtn', t('Gestion', 'Gestión'));
+    setElementText('#routesImportExportSubtabBtn', t('Import/Export', 'Importar/Exportar'));
+    setElementText('#routesToolsSubtabBtn', t('Outils', 'Herramientas'));
     setElementText('#measureClearBtn', t('Effacer mesure', 'Borrar medición'));
     setElementText('label[for="importRouteInput"]', t('Importer (JSON / GPX):', 'Importar (JSON / GPX):'));
 
@@ -350,6 +364,16 @@ function applyLanguageToUi() {
     setElementText('#cloudStatus', t('Mode local (pas de cloud configuré)', 'Modo local (nube no configurada)'));
     setElementText('#cloudDataSourceStatus', t('Données routes/photos: en attente', 'Datos rutas/fotos: en espera'));
     setElementText('#cloudAutoSyncInfo', t('Routes + photos waypoint + maintenance: synchronisation cloud automatique.', 'Rutas + fotos waypoint + mantenimiento: sincronización nube automática.'));
+    setElementText('#cloudStatsTitle', t('Tableau des enregistrements', 'Tabla de registros'));
+    setElementText('#cloudStatsSourceLabel', t('Source', 'Origen'));
+    setElementText('#cloudStatsRoutesLabel', t('Routes', 'Rutas'));
+    setElementText('#cloudStatsPhotosLabel', t('Photos waypoint', 'Fotos waypoint'));
+    setElementText('#cloudStatsBoardsLabel', t('Schémas maintenance', 'Esquemas mantenimiento'));
+    setElementText('#cloudStatsExpensesLabel', t('Factures / dépenses', 'Facturas / gastos'));
+    setElementText('#cloudStatsSuppliersLabel', t('Fournisseurs', 'Proveedores'));
+    setElementText('#cloudStatsNavLabel', t('Entrées journal nav', 'Entradas diario nav'));
+    setElementText('#cloudStatsEngineLabel', t('Entrées moteur', 'Entradas motor'));
+    setElementText('#cloudStatsTotalLabel', t('Total enregistrements', 'Total registros'));
 
     setElementText('#startNavLogBtn', t('Démarrer log GPS', 'Iniciar log GPS'));
     setElementText('#stopNavLogBtn', t('Arrêter log GPS', 'Detener log GPS'));
@@ -515,6 +539,7 @@ function applyLanguageToUi() {
     setMeasureMode(measureModeEnabled);
     refreshBaseLayerControlLanguage();
     updateLanguageButtonsUi();
+    renderCloudStatsTable();
 }
 
 function getLayerControlLabels() {
@@ -634,17 +659,22 @@ async function applyAuthGateState({ clearWhenLocked = true } = {}) {
 
     if (!protectedDataLoaded) {
         if (isAuthRequiredRuntime()) {
-            savedRoutesCache = [];
+            // Hydrate local caches first to avoid blanking maintenance data
+            // if the cloud payload does not include maintenance fields.
+            loadWaypointPhotoEntries();
+            renderWaypointPhotoList();
+            syncWaypointPhotoMarkersInView();
+            loadMaintenanceBoards();
+            loadMaintenanceExpenses();
+            loadMaintenanceSuppliers();
+            renderMaintenanceBoard();
+            renderMaintenanceExpenses();
+            renderMaintenanceSuppliers();
+            loadNavigationLogbook();
+            loadEngineLogbook();
+            setSavedRoutes(loadRoutesFromLocalStorage());
             refreshSavedList();
-            setWaypointPhotoEntries([], { persistLocal: false, refreshUi: true });
-            setMaintenanceBoards([], { persistLocal: false, refreshUi: true, syncCloud: false });
-            setMaintenanceExpenses([], { persistLocal: false, refreshUi: true, syncCloud: false });
-            setMaintenanceSuppliers([], { persistLocal: false, refreshUi: true, syncCloud: false });
-            navLogEntries = [];
-            renderNavLogList();
-            engineLogEntries = [];
-            renderEngineLogList();
-            updateCloudDataSourceStatus('attente authentification', 0, 0);
+            updateCloudDataSourceStatus('cache local (auth ok)', getSavedRoutes().length, waypointPhotoEntries.length);
         } else {
             loadWaypointPhotoEntries();
             renderWaypointPhotoList();
@@ -1036,7 +1066,70 @@ function getProtectionCheckboxValues() {
 }
 
 function buildGoogleMapsUrl(lat, lng) {
-    return `https://www.google.com/maps?q=${lat},${lng}`;
+    const latitude = Number(lat);
+    const longitude = Number(lng);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        return 'https://www.google.com/maps';
+    }
+
+    const query = `${latitude.toFixed(6)},${longitude.toFixed(6)}`;
+    return `https://maps.google.com/maps?q=${encodeURIComponent(query)}&hl=fr&z=14&output=embed`;
+}
+
+function ensureMapWebOverlay() {
+    if (mapWebOverlayElement && mapWebOverlayFrame) {
+        return { overlay: mapWebOverlayElement, frame: mapWebOverlayFrame };
+    }
+
+    const mapContainer = document.getElementById('map');
+    if (!mapContainer) return { overlay: null, frame: null };
+
+    const overlay = document.createElement('div');
+    overlay.className = 'map-web-overlay';
+    overlay.style.display = 'none';
+
+    const header = document.createElement('div');
+    header.className = 'map-web-overlay__header';
+
+    const title = document.createElement('strong');
+    title.textContent = t('Aperçu Google', 'Vista Google');
+    header.appendChild(title);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'map-web-overlay__close';
+    closeBtn.textContent = t('Fermer', 'Cerrar');
+    closeBtn.addEventListener('click', () => {
+        overlay.style.display = 'none';
+        if (mapWebOverlayFrame) {
+            mapWebOverlayFrame.src = 'about:blank';
+        }
+    });
+    header.appendChild(closeBtn);
+
+    const frame = document.createElement('iframe');
+    frame.className = 'map-web-overlay__frame';
+    frame.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
+    frame.setAttribute('loading', 'eager');
+
+    overlay.appendChild(header);
+    overlay.appendChild(frame);
+    mapContainer.appendChild(overlay);
+
+    mapWebOverlayElement = overlay;
+    mapWebOverlayFrame = frame;
+    return { overlay, frame };
+}
+
+function openUrlInMapOverlay(url) {
+    const safeUrl = String(url || '').trim();
+    if (!safeUrl) return;
+
+    const { overlay, frame } = ensureMapWebOverlay();
+    if (!overlay || !frame) return;
+
+    overlay.style.display = 'flex';
+    frame.src = safeUrl;
 }
 
 function buildReverseGeocodeCacheKey(lat, lng) {
@@ -1172,6 +1265,10 @@ function updateWaypointGoogleMapPreview(lat, lng) {
     mapContainer.style.display = 'block';
     googleLink.style.display = 'inline-block';
     googleLink.href = buildGoogleMapsUrl(lat, lng);
+    googleLink.onclick = (event) => {
+        event.preventDefault();
+        openUrlInMapOverlay(googleLink.href);
+    };
 
     waypointEditorIsUpdating = true;
     editor.setView([lat, lng], Math.max(editor.getZoom(), 13));
@@ -2235,9 +2332,100 @@ function renderNearbyList(containerId, items, emptyText) {
         return;
     }
 
+    const isShopList = containerId === 'nearbyShops';
+    const kind = isShopList ? 'shop' : 'restaurant';
+
+    const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+    const buildGoogleSearchUrl = (item) => {
+        const name = String(item?.name || '').trim();
+        const lat = Number(item?.lat);
+        const lon = Number(item?.lon);
+        const hasCoords = Number.isFinite(lat) && Number.isFinite(lon);
+        const coords = hasCoords ? `${lat.toFixed(6)},${lon.toFixed(6)}` : '';
+        const query = [name, coords].filter(Boolean).join(', ');
+        const safeQuery = query || name || coords || '';
+        return `https://maps.google.com/maps?q=${encodeURIComponent(safeQuery)}&hl=fr&z=14&output=embed`;
+    };
+
+    const formatAmenityScore = (item, amenityKind) => {
+        const distance = Number(item?.distanceNm);
+        const tags = item?.tags || {};
+        let score = 86;
+
+        if (Number.isFinite(distance)) {
+            score -= distance * 9;
+        }
+
+        if (tags.opening_hours) score += 4;
+        if (tags.phone) score += 3;
+        if (tags.website) score += 4;
+        if (tags['addr:street']) score += 2;
+        if (tags.wheelchair === 'yes') score += 2;
+
+        if (amenityKind === 'restaurant') {
+            if (tags.cuisine) score += 6;
+            if (tags.takeaway === 'yes') score += 2;
+            if (tags.delivery === 'yes') score += 2;
+            if (tags.outdoor_seating === 'yes') score += 1;
+        } else {
+            if (tags.shop) score += 4;
+            if (tags.brand) score += 3;
+            if (tags.organic === 'yes') score += 2;
+        }
+
+        return clamp(Math.round(score), 45, 99);
+    };
+
+    const buildAmenitySummary = (item, amenityKind) => {
+        const tags = item?.tags || {};
+        const summaryParts = [];
+
+        if (amenityKind === 'restaurant') {
+            const cuisine = String(tags.cuisine || '').trim();
+            if (cuisine) {
+                summaryParts.push(`${t('Cuisine', 'Cocina')}: ${cuisine.replaceAll(';', ', ')}`);
+            }
+            if (tags.takeaway === 'yes') summaryParts.push(t('À emporter', 'Para llevar'));
+            if (tags.delivery === 'yes') summaryParts.push(t('Livraison', 'Entrega'));
+        } else {
+            const shopType = String(tags.shop || '').trim();
+            if (shopType) summaryParts.push(`${t('Type', 'Tipo')}: ${shopType}`);
+            const brand = String(tags.brand || '').trim();
+            if (brand) summaryParts.push(`${t('Enseigne', 'Marca')}: ${brand}`);
+        }
+
+        const openingHours = String(tags.opening_hours || '').trim();
+        if (openingHours) {
+            summaryParts.push(`${t('Horaires', 'Horario')}: ${openingHours}`);
+        }
+
+        if (summaryParts.length === 0) {
+            return t('Infos limitées (OSM)', 'Info limitada (OSM)');
+        }
+
+        return summaryParts.slice(0, 2).join(' · ');
+    };
+
     container.innerHTML = `<div class="arrival-list">${items.map(item =>
-        `<div class="arrival-list__item"><strong>${escapeHtml(item.name)}</strong><br>${item.distanceNm.toFixed(2)} nm</div>`
+        `<div class="arrival-list__item">
+            <div class="arrival-list__head">
+                <strong>${escapeHtml(item.name)}</strong>
+                <span class="arrival-list__score">${t('Score', 'Puntuacion')}: ${formatAmenityScore(item, kind)}/100</span>
+            </div>
+            <div class="arrival-list__meta">${item.distanceNm.toFixed(2)} nm · ${escapeHtml(buildAmenitySummary(item, kind))}</div>
+            <a class="arrival-list__link" href="${buildGoogleSearchUrl(item)}">${t('Voir sur Google', 'Ver en Google')}</a>
+        </div>`
     ).join('')}</div>`;
+
+    container.querySelectorAll('.arrival-list__link').forEach(link => {
+        link.addEventListener('click', event => {
+            event.preventDefault();
+            const href = String(link.getAttribute('href') || '').trim();
+            if (!href) return;
+            openUrlInMapOverlay(href);
+        });
+    });
 }
 
 function applyAnchorageAsFinalWaypoint(anchorage) {
@@ -2303,6 +2491,8 @@ async function analyzeArrivalZone() {
         return;
     }
 
+    beginAiTrafficSession(t('Analyse zone arrivée', 'Analisis zona llegada'));
+
     const button = document.getElementById('analyzeArrivalBtn');
     const summary = document.getElementById('arrivalSummary');
     if (button) {
@@ -2312,34 +2502,62 @@ async function analyzeArrivalZone() {
     if (summary) summary.textContent = t('Analyse mouillage: récupération des données...', 'Análisis fondeo: recuperando datos...');
 
     clearArrivalPoiMarkers();
+    pushAiTrafficLog(t('Nettoyage des marqueurs d\'arrivée précédents', 'Limpieza de marcadores de llegada anteriores'));
 
     try {
         const destination = routePoints[routePoints.length - 1];
         const arrivalTime = getArrivalReferenceDateTime();
+        pushAiTrafficLog(t(
+            `Destination ciblée: ${Number(destination.lat).toFixed(4)}, ${Number(destination.lng).toFixed(4)}`,
+            `Destino objetivo: ${Number(destination.lat).toFixed(4)}, ${Number(destination.lng).toFixed(4)}`
+        ));
 
+        pushAiTrafficLog(t('Recherche mouillages à proximité (Overpass)...', 'Busqueda de fondeos cercanos (Overpass)...'));
         const anchorages = await fetchNearbyAnchorages(destination.lat, destination.lng);
-        const restaurants = await fetchNearbyAmenityList(destination.lat, destination.lng, 'restaurant');
-        const shops = await fetchNearbyAmenityList(destination.lat, destination.lng, 'shop');
+        pushAiTrafficLog(t(`Mouillages trouvés: ${anchorages.length}`, `Fondeos encontrados: ${anchorages.length}`));
 
+        pushAiTrafficLog(t('Recherche restaurants proches...', 'Busqueda de restaurantes cercanos...'));
+        const restaurants = await fetchNearbyAmenityList(destination.lat, destination.lng, 'restaurant');
+        pushAiTrafficLog(t(`Restaurants trouvés: ${restaurants.length}`, `Restaurantes encontrados: ${restaurants.length}`));
+
+        pushAiTrafficLog(t('Recherche magasins proches...', 'Busqueda de tiendas cercanas...'));
+        const shops = await fetchNearbyAmenityList(destination.lat, destination.lng, 'shop');
+        pushAiTrafficLog(t(`Magasins trouvés: ${shops.length}`, `Tiendas encontradas: ${shops.length}`));
+
+        pushAiTrafficLog(t('Scoring météo des mouillages...', 'Puntuacion meteo de los fondeos...'));
         const recommendations = await scoreAnchoragesForArrival(anchorages, arrivalTime);
+        pushAiTrafficLog(t(
+            `Top recommandations calculées: ${recommendations.length}`,
+            `Top recomendaciones calculadas: ${recommendations.length}`
+        ));
 
         recommendations.forEach(item => addArrivalPoiMarker(item.lat, item.lon, item.name, 'anchorage'));
         restaurants.forEach(item => addArrivalPoiMarker(item.lat, item.lon, item.name, 'restaurant'));
         shops.forEach(item => addArrivalPoiMarker(item.lat, item.lon, item.name, 'shop'));
+        pushAiTrafficLog(t('Marqueurs arrivée affichés sur la carte', 'Marcadores de llegada mostrados en el mapa'));
 
         renderAnchorageRecommendations(recommendations);
         renderNearbyList('nearbyRestaurants', restaurants, t('Aucun restaurant proche trouvé', 'No se encontraron restaurantes cercanos'));
         renderNearbyList('nearbyShops', shops, t('Aucun magasin proche trouvé', 'No se encontraron tiendas cercanas'));
+        pushAiTrafficLog(t('Listes arrivée mises à jour', 'Listas de llegada actualizadas'));
 
         if (summary) {
             if (recommendations.length) {
                 summary.innerHTML = `<strong>${t('Top mouillage:', 'Mejor fondeo:')}</strong> ${escapeHtml(recommendations[0].name)} · ${recommendations[0].distanceNm.toFixed(2)} nm ${t('de l\'arrivée', 'de la llegada')}`;
+                pushAiTrafficLog(t(
+                    `Top mouillage: ${recommendations[0].name} (${recommendations[0].distanceNm.toFixed(2)} nm)`,
+                    `Mejor fondeo: ${recommendations[0].name} (${recommendations[0].distanceNm.toFixed(2)} nm)`
+                ));
             } else {
                 summary.textContent = t('Analyse mouillage: aucun mouillage adapté trouvé à proximité.', 'Análisis fondeo: no se encontró un fondeo adecuado cerca.');
+                pushAiTrafficLog(t('Aucun mouillage adapté trouvé', 'No se encontro fondeo adecuado'));
             }
         }
+        endAiTrafficSession(t('Analyse arrivée terminée', 'Analisis llegada terminado'));
     } catch (_error) {
+        pushAiTrafficLog(t('Erreur pendant l\'analyse arrivée', 'Error durante el analisis de llegada'));
         if (summary) summary.textContent = t('Analyse mouillage: erreur de récupération des données.', 'Análisis fondeo: error al recuperar datos.');
+        endAiTrafficSession(t('Analyse arrivée terminée en erreur', 'Analisis llegada terminado con error'));
     } finally {
         if (button) {
             button.disabled = false;
@@ -3759,6 +3977,38 @@ function toFiniteAmount(value) {
     return Math.max(0, Math.round(num * 100) / 100);
 }
 
+function toTimestampMs(value) {
+    const ts = Date.parse(String(value || ''));
+    return Number.isFinite(ts) ? ts : 0;
+}
+
+function mergeByIdPreferNewest(localList, remoteList, sanitizeFn) {
+    const mergedById = new Map();
+
+    const upsert = (entry) => {
+        const sanitized = sanitizeFn(entry);
+        const id = String(sanitized?.id || '').trim();
+        if (!id) return;
+
+        const previous = mergedById.get(id);
+        if (!previous) {
+            mergedById.set(id, sanitized);
+            return;
+        }
+
+        const prevTs = toTimestampMs(previous.updatedAt);
+        const nextTs = toTimestampMs(sanitized.updatedAt);
+        if (nextTs >= prevTs) {
+            mergedById.set(id, sanitized);
+        }
+    };
+
+    (Array.isArray(remoteList) ? remoteList : []).forEach(upsert);
+    (Array.isArray(localList) ? localList : []).forEach(upsert);
+
+    return Array.from(mergedById.values());
+}
+
 function parseExpenseLinesText(raw) {
     const text = String(raw || '');
     return text
@@ -3980,7 +4230,9 @@ function setMaintenanceSuppliers(list, { persistLocal = true, refreshUi = true, 
         saveArrayToStorage(MAINTENANCE_SUPPLIERS_STORAGE_KEY, maintenanceSuppliers);
     }
     if (syncCloud && isCloudReady()) {
-        pushRoutesToCloud().catch(() => null);
+        pushRoutesToCloud().catch(error => {
+            setCloudStatus(t(`Synchro cloud fournisseurs en échec: ${formatCloudError(error)}`, `Fallo sincronización nube proveedores: ${formatCloudError(error)}`), true);
+        });
     }
     if (refreshUi) {
         renderMaintenanceSuppliers();
@@ -3988,9 +4240,21 @@ function setMaintenanceSuppliers(list, { persistLocal = true, refreshUi = true, 
 }
 
 function persistMaintenanceSuppliers({ syncCloud = true } = {}) {
+    maintenanceSuppliersCloudDirty = true;
+    maintenanceSuppliersLastLocalMutationAt = Date.now();
     saveArrayToStorage(MAINTENANCE_SUPPLIERS_STORAGE_KEY, maintenanceSuppliers);
     if (syncCloud && isCloudReady()) {
-        pushRoutesToCloud().catch(() => null);
+        const mutationStamp = maintenanceSuppliersLastLocalMutationAt;
+        maintenanceSuppliersSyncInFlight = true;
+        pushRoutesToCloud().catch(error => {
+            setCloudStatus(t(`Synchro cloud fournisseurs en échec: ${formatCloudError(error)}`, `Fallo sincronización nube proveedores: ${formatCloudError(error)}`), true);
+        }).then(() => {
+            if (maintenanceSuppliersLastLocalMutationAt === mutationStamp) {
+                maintenanceSuppliersCloudDirty = false;
+            }
+        }).finally(() => {
+            maintenanceSuppliersSyncInFlight = false;
+        });
     }
 }
 
@@ -5319,6 +5583,31 @@ function setActiveMaintenanceExpensesView(viewKey) {
     if (addPanel) addPanel.classList.toggle('active', activeMaintenanceExpensesView === 'add');
 }
 
+function setActiveRoutesSubtab(tabKey) {
+    activeRoutesSubtab = ['manage', 'importexport', 'tools'].includes(tabKey) ? tabKey : 'manage';
+
+    const tabBtnMap = {
+        manage: document.getElementById('routesManageSubtabBtn'),
+        importexport: document.getElementById('routesImportExportSubtabBtn'),
+        tools: document.getElementById('routesToolsSubtabBtn')
+    };
+    const panelMap = {
+        manage: document.getElementById('routesManagePanel'),
+        importexport: document.getElementById('routesImportExportPanel'),
+        tools: document.getElementById('routesToolsPanel')
+    };
+
+    Object.entries(tabBtnMap).forEach(([key, node]) => {
+        if (!node) return;
+        node.classList.toggle('active', key === activeRoutesSubtab);
+    });
+
+    Object.entries(panelMap).forEach(([key, node]) => {
+        if (!node) return;
+        node.classList.toggle('active', key === activeRoutesSubtab);
+    });
+}
+
 function renderMaintenanceBoard() {
     const image = document.getElementById('maintenanceSchemaImage');
     const pinsLayer = document.getElementById('maintenancePinsLayer');
@@ -6058,6 +6347,7 @@ function updateCloudAuthUi() {
     if (emailSignInBtn) emailSignInBtn.disabled = !cloudClient || !!cloudAuthUser;
     if (emailSignUpBtn) emailSignUpBtn.disabled = !cloudClient || !!cloudAuthUser;
     if (signOutBtn) signOutBtn.disabled = !cloudClient || !cloudAuthUser;
+    renderCloudStatsTable();
 }
 
 function readCloudUserCredentials() {
@@ -7405,39 +7695,55 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     // Saved routes UI
     document.getElementById('saveRouteBtn').addEventListener('click', () => { saveRoute(); });
-    document.getElementById('loadRouteBtn').addEventListener('click', () => {
-        const sel = document.getElementById('savedRoutesSelect');
-        loadRoute(sel.selectedIndex);
-    });
-    document.getElementById('savedRoutesSelect').addEventListener('change', e => {
-        const index = Number(e.target.selectedIndex);
-        if (Number.isFinite(index) && index >= 0) {
-            loadRoute(index);
-        }
-    });
     const reverseRouteBtn = document.getElementById('reverseRouteBtn');
     if (reverseRouteBtn) {
         reverseRouteBtn.addEventListener('click', () => {
             reverseCurrentRoute();
         });
     }
-    document.getElementById('deleteRouteBtn').addEventListener('click', () => {
-        const sel = document.getElementById('savedRoutesSelect');
-        deleteRoute(sel.selectedIndex);
-    });
     document.getElementById('exportRouteBtn').addEventListener('click', () => {
-        const sel = document.getElementById('savedRoutesSelect');
-        exportRoute(sel.selectedIndex);
+        if (currentLoadedRouteIndex >= 0) {
+            exportRoute(currentLoadedRouteIndex);
+        } else {
+            alert(t('Aucune route chargée', 'No hay ruta cargada'));
+        }
     });
     document.getElementById('exportRouteGpxBtn').addEventListener('click', () => {
-        const sel = document.getElementById('savedRoutesSelect');
-        exportRouteGpx(sel.selectedIndex);
+        if (currentLoadedRouteIndex >= 0) {
+            exportRouteGpx(currentLoadedRouteIndex);
+        } else {
+            alert(t('Aucune route chargée', 'No hay ruta cargada'));
+        }
     });
     const exportVoyagePdfBtn = document.getElementById('exportVoyagePdfBtn');
     if (exportVoyagePdfBtn) {
         exportVoyagePdfBtn.addEventListener('click', exportVoyagePdfReport);
     }
     document.getElementById('importRouteInput').addEventListener('change', handleImport);
+
+    // Routes subtabs
+    const routesManageSubtabBtn = document.getElementById('routesManageSubtabBtn');
+    const routesImportExportSubtabBtn = document.getElementById('routesImportExportSubtabBtn');
+    const routesToolsSubtabBtn = document.getElementById('routesToolsSubtabBtn');
+    if (routesManageSubtabBtn) {
+        routesManageSubtabBtn.addEventListener('click', () => setActiveRoutesSubtab('manage'));
+    }
+    if (routesImportExportSubtabBtn) {
+        routesImportExportSubtabBtn.addEventListener('click', () => setActiveRoutesSubtab('importexport'));
+    }
+    if (routesToolsSubtabBtn) {
+        routesToolsSubtabBtn.addEventListener('click', () => setActiveRoutesSubtab('tools'));
+    }
+    setActiveRoutesSubtab('manage');
+
+    // Route search input
+    const routeSearchInput = document.getElementById('routeSearchInput');
+    if (routeSearchInput) {
+        routeSearchInput.addEventListener('input', (e) => {
+            routesSearchTerm = e.target.value;
+            refreshSavedList();
+        });
+    }
 
     const cloudRefreshBtn = document.getElementById('cloudRefreshBtn');
     if (cloudRefreshBtn) {
@@ -7978,6 +8284,32 @@ async function computeRoute() {
     });
 
     renderWindSpeedLegend();
+
+    // Auto-save distance after routing
+    if (routePoints.length > 1 && Number.isInteger(currentLoadedRouteIndex) && currentLoadedRouteIndex >= 0) {
+        const allSavedRoutes = getSavedRoutes();
+        if (currentLoadedRouteIndex < allSavedRoutes.length) {
+            const routeToUpdate = allSavedRoutes[currentLoadedRouteIndex];
+            if (routeToUpdate && Number.isFinite(totalDistance)) {
+                // Update the route with the computed distance
+                routeToUpdate.totalDistanceNm = Number(totalDistance.toFixed(2));
+                routeToUpdate.updatedAt = new Date().toISOString();
+                setSavedRoutes(allSavedRoutes);
+                
+                // Refresh the UI to show updated distance
+                setTimeout(() => refreshSavedList(), 100);
+                
+                updateCloudDataSourceStatus('local (non synchronisé)', allSavedRoutes.length, waypointPhotoEntries.length);
+                
+                // Sync to cloud if available
+                if (isCloudReady()) {
+                    pushRoutesToCloud().catch(error => {
+                        updateCloudDataSourceStatus('cache local (synchro en échec)', allSavedRoutes.length, waypointPhotoEntries.length);
+                    });
+                }
+            }
+        }
+    }
 
     updateArrivalPointWeather(totalTime);
 }
@@ -8721,6 +9053,8 @@ function sanitizeSavedRoute(route, fallbackIndex = 0) {
             }))
             .filter(pt => Number.isFinite(pt.lat) && Number.isFinite(pt.lon))
         : [];
+    const parsedDistance = Number(route?.totalDistanceNm);
+    const totalDistanceNm = Number.isFinite(parsedDistance) ? parsedDistance : null;
 
     return {
         name,
@@ -8728,6 +9062,7 @@ function sanitizeSavedRoute(route, fallbackIndex = 0) {
         time,
         tackingTimeHours: tacking,
         points,
+        totalDistanceNm,
         createdAt: String(route?.createdAt || nowIso),
         updatedAt: String(route?.updatedAt || route?.createdAt || nowIso)
     };
@@ -8779,14 +9114,13 @@ function saveCloudConfigToStorage(config) {
 function setCloudStatus(message, isError = false) {
     const status = document.getElementById('cloudStatus');
     if (!status) return;
+    cloudLastStatusMessage = String(message || '');
     status.textContent = message;
     status.style.color = isError ? '#ff8f8f' : '';
+    renderCloudStatsTable();
 }
 
-function updateCloudDataSourceStatus(sourceLabel, routeCount = null, photoCount = null) {
-    const status = document.getElementById('cloudDataSourceStatus');
-    if (!status) return;
-
+function getLocalizedCloudSourceLabel(sourceLabel) {
     const safeSource = String(sourceLabel || 'inconnu');
     const sourceLabelMap = {
         'verrouillé (auth requise)': t('verrouillé (auth requise)', 'bloqueado (auth requerida)'),
@@ -8800,10 +9134,49 @@ function updateCloudDataSourceStatus(sourceLabel, routeCount = null, photoCount 
         'local (non synchronisé)': t('local (non synchronisé)', 'local (no sincronizado)'),
         'cache local (synchro en échec)': t('cache local (synchro en échec)', 'caché local (sincronización fallida)')
     };
-    const safeSourceLocalized = sourceLabelMap[safeSource] || safeSource;
+    return sourceLabelMap[safeSource] || safeSource;
+}
+
+function renderCloudStatsTable() {
+    const sourceValue = document.getElementById('cloudStatsSourceValue');
+    if (!sourceValue) return;
+
+    const routesCount = getSavedRoutes().length;
+    const photosCount = waypointPhotoEntries.length;
+    const boardsCount = maintenanceBoards.length;
+    const expensesCount = maintenanceExpenses.length;
+    const suppliersCount = maintenanceSuppliers.length;
+    const navCount = navLogEntries.length;
+    const engineCount = engineLogEntries.length;
+    const totalCount = routesCount + photosCount + boardsCount + expensesCount + suppliersCount + navCount + engineCount;
+
+    sourceValue.textContent = getLocalizedCloudSourceLabel(cloudDataSourceLabel);
+
+    const setText = (id, value) => {
+        const node = document.getElementById(id);
+        if (node) node.textContent = String(value);
+    };
+
+    setText('cloudStatsRoutesValue', routesCount);
+    setText('cloudStatsPhotosValue', photosCount);
+    setText('cloudStatsBoardsValue', boardsCount);
+    setText('cloudStatsExpensesValue', expensesCount);
+    setText('cloudStatsSuppliersValue', suppliersCount);
+    setText('cloudStatsNavValue', navCount);
+    setText('cloudStatsEngineValue', engineCount);
+    setText('cloudStatsTotalValue', totalCount);
+}
+
+function updateCloudDataSourceStatus(sourceLabel, routeCount = null, photoCount = null) {
+    const status = document.getElementById('cloudDataSourceStatus');
+    if (!status) return;
+
+    cloudDataSourceLabel = String(sourceLabel || 'inconnu');
+    const safeSourceLocalized = getLocalizedCloudSourceLabel(cloudDataSourceLabel);
     const routesLabel = Number.isFinite(routeCount) ? routeCount : getSavedRoutes().length;
     const photosLabel = Number.isFinite(photoCount) ? photoCount : waypointPhotoEntries.length;
     status.textContent = `${t('Données routes/photos/maintenance', 'Datos rutas/fotos/mantenimiento')}: ${safeSourceLocalized} · ${t('routes', 'rutas')}: ${routesLabel} · ${t('photos', 'fotos')}: ${photosLabel} · ${t('schémas', 'esquemas')}: ${maintenanceBoards.length} · ${t('dépenses', 'gastos')}: ${maintenanceExpenses.length} · ${t('fournisseurs', 'proveedores')}: ${maintenanceSuppliers.length}`;
+    renderCloudStatsTable();
 }
 
 function formatCloudError(error) {
@@ -8875,6 +9248,9 @@ async function pullRoutesFromCloud(options = {}) {
 
     const rawPayload = data?.routes;
     const cloudUpdatedAtMs = Date.parse(String(data?.updated_at || ''));
+    if (Number.isFinite(cloudUpdatedAtMs)) {
+        cloudLastSeenUpdatedAtMs = Math.max(cloudLastSeenUpdatedAtMs, cloudUpdatedAtMs);
+    }
     const hasCloudPayload = rawPayload !== undefined && rawPayload !== null;
 
     if (!hasCloudPayload) {
@@ -8887,6 +9263,9 @@ async function pullRoutesFromCloud(options = {}) {
     let rawMaintenanceBoards = null;
     let rawMaintenanceExpenses = null;
     let rawMaintenanceSuppliers = null;
+    let hasMaintenanceBoardsField = false;
+    let hasMaintenanceExpensesField = false;
+    let hasMaintenanceSuppliersField = false;
     let rawNavLogEntries = null;
     let rawEngineLogEntries = null;
 
@@ -8895,6 +9274,9 @@ async function pullRoutesFromCloud(options = {}) {
     } else if (rawPayload && typeof rawPayload === 'object') {
         rawRoutes = Array.isArray(rawPayload.routes) ? rawPayload.routes : [];
         rawWaypointPhotos = Array.isArray(rawPayload.waypointPhotos) ? rawPayload.waypointPhotos : [];
+        hasMaintenanceBoardsField = Object.prototype.hasOwnProperty.call(rawPayload, 'maintenanceBoards');
+        hasMaintenanceExpensesField = Object.prototype.hasOwnProperty.call(rawPayload, 'maintenanceExpenses');
+        hasMaintenanceSuppliersField = Object.prototype.hasOwnProperty.call(rawPayload, 'maintenanceSuppliers');
         rawMaintenanceBoards = Array.isArray(rawPayload.maintenanceBoards) ? rawPayload.maintenanceBoards : null;
         rawMaintenanceExpenses = Array.isArray(rawPayload.maintenanceExpenses) ? rawPayload.maintenanceExpenses : null;
         rawMaintenanceSuppliers = Array.isArray(rawPayload.maintenanceSuppliers) ? rawPayload.maintenanceSuppliers : null;
@@ -8911,6 +9293,9 @@ async function pullRoutesFromCloud(options = {}) {
 
     if (allowMaintenanceOverwrite && Array.isArray(rawMaintenanceBoards)) {
         setMaintenanceBoards(rawMaintenanceBoards, { persistLocal: true, refreshUi: true, syncCloud: false });
+    } else if (allowMaintenanceOverwrite && !hasMaintenanceBoardsField && maintenanceBoards.length === 0) {
+        loadMaintenanceBoards();
+        renderMaintenanceBoard();
     }
 
     if (allowMaintenanceOverwrite && Array.isArray(rawMaintenanceExpenses)) {
@@ -8926,10 +9311,16 @@ async function pullRoutesFromCloud(options = {}) {
                 maintenanceExpensesCloudDirty = false;
             }
         }
+    } else if (allowMaintenanceOverwrite && !hasMaintenanceExpensesField && maintenanceExpenses.length === 0) {
+        loadMaintenanceExpenses();
+        renderMaintenanceExpenses();
     }
 
     if (allowMaintenanceOverwrite && Array.isArray(rawMaintenanceSuppliers)) {
         setMaintenanceSuppliers(rawMaintenanceSuppliers, { persistLocal: true, refreshUi: true, syncCloud: false });
+    } else if (allowMaintenanceOverwrite && !hasMaintenanceSuppliersField && maintenanceSuppliers.length === 0) {
+        loadMaintenanceSuppliers();
+        renderMaintenanceSuppliers();
     }
 
     if (Array.isArray(rawNavLogEntries)) {
@@ -8951,28 +9342,77 @@ async function pullRoutesFromCloud(options = {}) {
 
 async function pushRoutesToCloud() {
     if (!isCloudReady()) return false;
+
+    const { data: remoteData, error: remoteError } = await cloudClient
+        .from(CLOUD_TABLE_NAME)
+        .select('routes,updated_at')
+        .eq('project_key', cloudConfig.projectKey)
+        .maybeSingle();
+
+    if (remoteError) throw remoteError;
+
+    const remoteUpdatedAtMs = toTimestampMs(remoteData?.updated_at);
+    const hasConcurrentRemoteWrite = Number.isFinite(remoteUpdatedAtMs)
+        && remoteUpdatedAtMs > 0
+        && remoteUpdatedAtMs > cloudLastSeenUpdatedAtMs;
+
+    let mergedMaintenanceExpenses = maintenanceExpenses;
+    let mergedMaintenanceSuppliers = maintenanceSuppliers;
+
+    if (hasConcurrentRemoteWrite && remoteData?.routes && typeof remoteData.routes === 'object' && !Array.isArray(remoteData.routes)) {
+        const remotePayload = remoteData.routes;
+        const remoteExpenses = Array.isArray(remotePayload.maintenanceExpenses) ? remotePayload.maintenanceExpenses : [];
+        const remoteSuppliers = Array.isArray(remotePayload.maintenanceSuppliers) ? remotePayload.maintenanceSuppliers : [];
+
+        mergedMaintenanceExpenses = mergeByIdPreferNewest(
+            maintenanceExpenses,
+            remoteExpenses,
+            entry => sanitizeMaintenanceExpense(entry)
+        ).sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+
+        mergedMaintenanceSuppliers = mergeByIdPreferNewest(
+            maintenanceSuppliers,
+            remoteSuppliers,
+            entry => sanitizeMaintenanceSupplier(entry)
+        )
+            .filter(entry => entry.name)
+            .sort((a, b) => a.name.localeCompare(b.name));
+    }
+
     const payload = {
         version: 5,
         routes: getSavedRoutes(),
         waypointPhotos: waypointPhotoEntries,
         maintenanceBoards,
-        maintenanceExpenses,
-        maintenanceSuppliers,
+        maintenanceExpenses: mergedMaintenanceExpenses,
+        maintenanceSuppliers: mergedMaintenanceSuppliers,
         navLogEntries,
         engineLogEntries
     };
+
+    const wroteMergedExpenses = mergedMaintenanceExpenses !== maintenanceExpenses;
+    const wroteMergedSuppliers = mergedMaintenanceSuppliers !== maintenanceSuppliers;
+    if (wroteMergedExpenses) {
+        setMaintenanceExpenses(mergedMaintenanceExpenses, { persistLocal: true, refreshUi: true, syncCloud: false });
+    }
+    if (wroteMergedSuppliers) {
+        setMaintenanceSuppliers(mergedMaintenanceSuppliers, { persistLocal: true, refreshUi: true, syncCloud: false });
+    }
+
+    const nextUpdatedAt = new Date().toISOString();
 
     const { error } = await cloudClient
         .from(CLOUD_TABLE_NAME)
         .upsert({
             project_key: cloudConfig.projectKey,
             routes: payload,
-            updated_at: new Date().toISOString()
+            updated_at: nextUpdatedAt
         }, {
             onConflict: 'project_key'
         });
 
     if (error) throw error;
+    cloudLastSeenUpdatedAtMs = Math.max(cloudLastSeenUpdatedAtMs, toTimestampMs(nextUpdatedAt));
     return true;
 }
 
@@ -9046,7 +9486,7 @@ async function connectCloud(config, { silent = false } = {}) {
         startCloudAutoSync();
 
         if (isCloudReady()) {
-            const routes = await pullRoutesFromCloud({ allowMaintenanceOverwrite: false });
+            const routes = await pullRoutesFromCloud({ allowMaintenanceOverwrite: true });
             refreshSavedList();
             setCloudStatus(t(`Cloud connecté · ${routes.length} route(s) partagée(s)`, `Nube conectada · ${routes.length} ruta(s) compartida(s)`));
         } else {
@@ -9072,31 +9512,134 @@ async function connectCloud(config, { silent = false } = {}) {
 }
 
 function refreshSavedList() {
-    const sel = document.getElementById('savedRoutesSelect');
-    if (!sel) return;
-    const previousIndex = sel.selectedIndex;
-    sel.innerHTML = '';
+    const container = document.getElementById('savedRoutesList');
+    if (!container) return;
+    
+    container.innerHTML = '';
     const saved = getSavedRoutes();
-    saved.forEach((r, i) => {
-        const opt = document.createElement('option');
-        opt.value = i;
-        opt.text = `${r.name} (${r.date} ${r.time})`;
-        sel.appendChild(opt);
-    });
-
+    
     if (saved.length === 0) {
         currentLoadedRouteIndex = -1;
+        container.innerHTML = `<div style="padding:8px; opacity:0.7; font-size:12px;">${t('Aucune route sauvegardée', 'No hay rutas guardadas')}</div>`;
         return;
     }
 
-    if (Number.isInteger(currentLoadedRouteIndex) && currentLoadedRouteIndex >= 0 && currentLoadedRouteIndex < saved.length) {
-        sel.selectedIndex = currentLoadedRouteIndex;
+    // Create indexed array with calculated distances
+    const routesWithData = saved.map((r, i) => {
+        let totalDistance = 0;
+        const storedDistance = Number(r.totalDistanceNm);
+        if (Number.isFinite(storedDistance)) {
+            totalDistance = storedDistance;
+        } else if (r.points && r.points.length > 1) {
+            for (let j = 0; j < r.points.length - 1; j++) {
+                const p1 = r.points[j];
+                const p2 = r.points[j + 1];
+                totalDistance += distanceNm(
+                    Number(p1.lat),
+                    Number(p1.lon ?? p1.lng),
+                    Number(p2.lat),
+                    Number(p2.lon ?? p2.lng)
+                );
+            }
+        }
+        return {
+            route: r,
+            index: i,
+            distance: totalDistance
+        };
+    });
+
+    // Filter by search term
+    let filteredRoutes = routesWithData;
+    if (routesSearchTerm.trim()) {
+        const searchLower = routesSearchTerm.toLowerCase().trim();
+        filteredRoutes = routesWithData.filter(item => 
+            item.route.name.toLowerCase().includes(searchLower)
+        );
+    }
+
+    // Sort by name
+    filteredRoutes.sort((a, b) => {
+        const nameA = a.route.name.toLowerCase();
+        const nameB = b.route.name.toLowerCase();
+        if (routesSortOrder === 'asc') {
+            return nameA.localeCompare(nameB);
+        } else {
+            return nameB.localeCompare(nameA);
+        }
+    });
+
+    // Header with sortable column
+    const header = document.createElement('div');
+    header.className = 'routes-list-header';
+    const sortIcon = routesSortOrder === 'asc' ? '▲' : '▼';
+    header.innerHTML = `
+        <div class="routes-header-sortable" id="routesHeaderName">${t('Nom', 'Nombre')} ${sortIcon}</div>
+        <div>${t('Distance', 'Distancia')}</div>
+        <div></div>
+    `;
+    container.appendChild(header);
+
+    // Add click handler for sorting
+    const nameHeader = document.getElementById('routesHeaderName');
+    if (nameHeader) {
+        nameHeader.addEventListener('click', () => {
+            routesSortOrder = routesSortOrder === 'asc' ? 'desc' : 'asc';
+            refreshSavedList();
+        });
+    }
+
+    if (filteredRoutes.length === 0) {
+        container.innerHTML += `<div style="padding:8px; opacity:0.7; font-size:12px;">${t('Aucune route trouvée', 'No se encontraron rutas')}</div>`;
         return;
     }
 
-    if (Number.isInteger(previousIndex) && previousIndex >= 0 && previousIndex < saved.length) {
-        sel.selectedIndex = previousIndex;
-    }
+    // Routes
+    filteredRoutes.forEach(({ route, index, distance }) => {
+        const row = document.createElement('div');
+        row.className = 'route-row';
+        if (index === currentLoadedRouteIndex) {
+            row.classList.add('route-row--active');
+        }
+
+        const btn = document.createElement('div');
+        btn.className = 'route-summary-btn';
+        btn.innerHTML = `
+            <div class="route-col" title="${route.name}">${route.name}</div>
+            <div class="route-col route-col--distance">${distance.toFixed(1)} NM</div>
+            <div class="route-actions">
+                <button class="route-action-btn route-action-btn--reroute" data-action="reroute" data-index="${index}" title="${t('Routage', 'Navegación')}">⛵</button>
+                <button class="route-action-btn route-action-btn--delete" data-action="delete" data-index="${index}" title="${t('Supprimer', 'Eliminar')}">🗑️</button>
+            </div>
+        `;
+        
+        btn.addEventListener('click', async (e) => {
+            const actionTarget = e.target.closest('[data-action]');
+            const action = actionTarget?.dataset?.action;
+
+            if (action === 'delete') {
+                e.stopPropagation();
+                deleteRoute(Number(actionTarget.dataset.index));
+                return;
+            }
+
+            if (action === 'reroute') {
+                e.stopPropagation();
+                loadRoute(index);
+                const routingTabBtn = document.getElementById('routingTabBtn');
+                if (routingTabBtn) routingTabBtn.click();
+                await computeRoute();
+                return;
+            }
+
+            if (!action) {
+                loadRoute(index);
+            }
+        });
+
+        row.appendChild(btn);
+        container.appendChild(row);
+    });
 }
 
 async function saveRoute() {
@@ -9111,17 +9654,41 @@ async function saveRoute() {
     const existingName = canUpdateLoadedRoute ? String(saved[currentLoadedRouteIndex]?.name || '').trim() : '';
     const name = rawName || existingName || fallbackName;
 
+    // Calculate distance from computed route or direct waypoint distance
+    let totalDistanceNm = undefined;
+    if (lastComputedReportData?.metrics?.totalDistanceNm) {
+        totalDistanceNm = Number(lastComputedReportData.metrics.totalDistanceNm);
+    } else if (routePoints.length > 1) {
+        // Calculate direct distance between waypoints
+        totalDistanceNm = 0;
+        for (let i = 0; i < routePoints.length - 1; i++) {
+            const p1 = routePoints[i];
+            const p2 = routePoints[i + 1];
+            totalDistanceNm += distanceNm(
+                Number(p1.lat),
+                Number(p1.lng ?? p1.lon),
+                Number(p2.lat),
+                Number(p2.lng ?? p2.lon)
+            );
+        }
+    }
+
     const payload = {
         name,
         date: departureDate,
         time: departureTime,
         tackingTimeHours,
-        points: routePoints.map(p => ({ lat: p.lat, lon: p.lng ?? p.lon })) ,
+        points: routePoints.map(p => ({ lat: p.lat, lon: p.lng ?? p.lon })),
         createdAt: canUpdateLoadedRoute
             ? (saved[currentLoadedRouteIndex]?.createdAt || new Date().toISOString())
             : new Date().toISOString(),
         updatedAt: new Date().toISOString()
     };
+
+    // Add distance if calculated
+    if (Number.isFinite(totalDistanceNm)) {
+        payload.totalDistanceNm = totalDistanceNm;
+    }
 
     if (canUpdateLoadedRoute) {
         saved[currentLoadedRouteIndex] = {
@@ -9148,11 +9715,6 @@ async function saveRoute() {
     }
 
     refreshSavedList();
-
-    const sel = document.getElementById('savedRoutesSelect');
-    if (sel && currentLoadedRouteIndex >= 0 && currentLoadedRouteIndex < saved.length) {
-        sel.selectedIndex = currentLoadedRouteIndex;
-    }
 
     alert(canUpdateLoadedRoute
         ? t(`Route mise à jour: ${name}`, `Ruta actualizada: ${name}`)
@@ -9284,11 +9846,19 @@ function loadRoute(index) {
     // draw polyline between waypoints
     drawRoute(routePoints);
 
-    // force recenter after loading from Routes tab
-    if (lastRouteBounds && lastRouteBounds.isValid()) {
-        recenterOnRoute();
-    } else if (routePoints.length > 0) {
-        map.setView(routePoints[0], Math.max(map.getZoom(), 10));
+    // Auto-zoom on loaded route
+    if (routePoints.length > 0) {
+        const bounds = L.latLngBounds(routePoints);
+        if (bounds.isValid()) {
+            map.fitBounds(bounds, {
+                padding: [50, 50],
+                maxZoom: 12,
+                animate: true,
+                duration: 0.5
+            });
+        } else {
+            map.setView(routePoints[0], Math.max(map.getZoom(), 10));
+        }
     }
 }
 

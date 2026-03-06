@@ -103,36 +103,47 @@
     </div>
 
     <div id="routesTab" class="tab-panel">
-        <label for="routeNameInput" style="display: block; margin-top: 10px; font-size: 12px;">Nom de la route:</label>
-        <input type="text" id="routeNameInput" placeholder="Nom de la route" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
-
-        <div class="button-row">
-            <button id="saveRouteBtn" style="flex:1;">Sauvegarder</button>
-            <button id="exportRouteBtn" style="flex:1;">Exporter</button>
-            <button id="exportRouteGpxBtn" style="flex:1;">Exporter GPX</button>
-            <button id="resetBtn" style="flex:1;">Reset</button>
-        </div>
-        <div class="button-row">
-            <button id="reverseRouteBtn" style="flex:1;">Route retour</button>
-        </div>
-        <button id="exportVoyagePdfBtn" style="margin-top:8px;">Exporter rapport PDF</button>
-
-        <label for="savedRoutesSelect" style="display: block; margin-top: 12px; font-size: 12px;">Routes sauvegardées:</label>
-        <select id="savedRoutesSelect" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;"></select>
-
-        <div class="button-row">
-            <button id="loadRouteBtn" style="flex:1;">Charger</button>
-            <button id="deleteRouteBtn" style="flex:1;">Supprimer</button>
+        <div class="page-subtabs">
+            <button id="routesManageSubtabBtn" type="button" class="page-subtab-btn active">Gestion</button>
+            <button id="routesImportExportSubtabBtn" type="button" class="page-subtab-btn">Import/Export</button>
+            <button id="routesToolsSubtabBtn" type="button" class="page-subtab-btn">Outils</button>
         </div>
 
-        <div class="button-row">
-            <button id="measureToggleBtn" style="flex:1;">Mesure NM: OFF</button>
-            <button id="measureClearBtn" style="flex:1;">Effacer mesure</button>
-        </div>
-        <div id="measureInfo" style="margin-top:6px; font-size:12px; opacity:0.9;">Mesure: 0.00 nm</div>
+        <div id="routesManagePanel" class="page-subpanel active">
+            <label for="routeNameInput" style="display: block; margin-top: 10px; font-size: 12px;">Nom de la route:</label>
+            <input type="text" id="routeNameInput" placeholder="Nom de la route" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
 
-        <label for="importRouteInput" style="display: block; margin-top: 12px; font-size: 12px;">Importer (JSON / GPX):</label>
-        <input type="file" id="importRouteInput" accept=".json,.gpx,application/json,application/gpx+xml,text/xml,application/xml" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
+            <div class="button-row">
+                <button id="saveRouteBtn" style="flex:1;">Sauvegarder</button>
+                <button id="resetBtn" style="flex:1;">Reset</button>
+            </div>
+            <div class="button-row">
+                <button id="reverseRouteBtn" style="flex:1;">Route retour</button>
+            </div>
+
+            <label id="savedRoutesListLabel" style="display:block; margin-top:12px; font-size:12px;">Routes sauvegardées:</label>
+            <input type="text" id="routeSearchInput" placeholder="Rechercher une route..." class="route-search-input">
+            <div id="savedRoutesList"></div>
+        </div>
+
+        <div id="routesImportExportPanel" class="page-subpanel">
+            <div class="button-row">
+                <button id="exportRouteBtn" style="flex:1;">Exporter JSON</button>
+                <button id="exportRouteGpxBtn" style="flex:1;">Exporter GPX</button>
+            </div>
+            <button id="exportVoyagePdfBtn" style="margin-top:8px;">Exporter rapport PDF</button>
+
+            <label for="importRouteInput" style="display: block; margin-top: 12px; font-size: 12px;">Importer (JSON / GPX):</label>
+            <input type="file" id="importRouteInput" accept=".json,.gpx,application/json,application/gpx+xml,text/xml,application/xml" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
+        </div>
+
+        <div id="routesToolsPanel" class="page-subpanel">
+            <div class="button-row">
+                <button id="measureToggleBtn" style="flex:1;">Mesure NM: OFF</button>
+                <button id="measureClearBtn" style="flex:1;">Effacer mesure</button>
+            </div>
+            <div id="measureInfo" style="margin-top:6px; font-size:12px; opacity:0.9;">Mesure: 0.00 nm</div>
+        </div>
     </div>
 
     <div id="cloudTab" class="tab-panel active">
@@ -158,6 +169,23 @@
             <div id="cloudStatus" class="cloud-status">Mode local (pas de cloud configuré)</div>
             <div id="cloudDataSourceStatus" class="cloud-status">Données routes/photos: en attente</div>
             <div id="cloudAutoSyncInfo" class="cloud-status">Routes + photos waypoint: synchronisation cloud automatique.</div>
+
+            <div class="cloud-stats-card">
+                <div id="cloudStatsTitle" class="cloud-config-title">Tableau des enregistrements</div>
+                <table class="cloud-stats-table" aria-label="Statut cloud">
+                    <tbody>
+                        <tr><th id="cloudStatsSourceLabel">Source</th><td id="cloudStatsSourceValue">initialisation</td></tr>
+                        <tr><th id="cloudStatsRoutesLabel">Routes</th><td id="cloudStatsRoutesValue">0</td></tr>
+                        <tr><th id="cloudStatsPhotosLabel">Photos waypoint</th><td id="cloudStatsPhotosValue">0</td></tr>
+                        <tr><th id="cloudStatsBoardsLabel">Schémas maintenance</th><td id="cloudStatsBoardsValue">0</td></tr>
+                        <tr><th id="cloudStatsExpensesLabel">Factures / dépenses</th><td id="cloudStatsExpensesValue">0</td></tr>
+                        <tr><th id="cloudStatsSuppliersLabel">Fournisseurs</th><td id="cloudStatsSuppliersValue">0</td></tr>
+                        <tr><th id="cloudStatsNavLabel">Entrées journal nav</th><td id="cloudStatsNavValue">0</td></tr>
+                        <tr><th id="cloudStatsEngineLabel">Entrées moteur</th><td id="cloudStatsEngineValue">0</td></tr>
+                        <tr class="cloud-stats-total"><th id="cloudStatsTotalLabel">Total enregistrements</th><td id="cloudStatsTotalValue">0</td></tr>
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 
@@ -278,7 +306,7 @@
         <div id="waypointPhotoStatus" style="margin-top:6px; font-size:12px; opacity:0.9;">Coordonnées: en attente d'une photo</div>
         <img id="waypointPhotoPreview" alt="Prévisualisation" class="waypoint-photo-preview" style="display:none;">
         <div id="waypointEditorMap" class="waypoint-editor-map" style="display:none;"></div>
-        <a id="waypointGoogleMapLink" class="waypoint-google-link" href="#" target="_blank" rel="noopener" style="display:none;">Ouvrir dans Google Maps</a>
+        <a id="waypointGoogleMapLink" class="waypoint-google-link" href="#" target="_self" style="display:none;">Ouvrir dans Google Maps</a>
 
         <label for="waypointPlaceNameInput" style="display: block; margin-top: 10px; font-size: 12px;">Nom du lieu:</label>
         <input type="text" id="waypointPlaceNameInput" placeholder="Ex: Cala Blanca" style="width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
@@ -519,14 +547,16 @@
         </div>
     </div>
 
-    <div class="sidebar-footer">
-        <span class="creator-credit">Programa creado por Max Patissier</span>
-        <span id="buildVersionBadge" class="build-version-badge">v20260305-20</span>
-        <div class="lang-switch" aria-label="Sélecteur de langue">
-            <button id="langFrBtn" class="lang-btn" type="button">FR</button>
-            <button id="langEsBtn" class="lang-btn" type="button">ES</button>
+    <div id="sidebarFooterContainer">
+        <div class="sidebar-footer">
+            <span class="creator-credit">Programa creado por Max Patissier</span>
+            <span id="buildVersionBadge" class="build-version-badge">v20260305-20</span>
+            <div class="lang-switch" aria-label="Sélecteur de langue">
+                <button id="langFrBtn" class="lang-btn" type="button">FR</button>
+                <button id="langEsBtn" class="lang-btn" type="button">ES</button>
+            </div>
+            <a id="helpFab" href="help.html" target="_blank" rel="noopener" title="Ayuda">❓ HELP</a>
         </div>
-        <a id="helpFab" href="help.html" target="_blank" rel="noopener" title="Ayuda">❓ HELP</a>
     </div>
 </div>
 
