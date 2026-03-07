@@ -86,6 +86,7 @@ const CLOUD_PROJECTS_TABLE = 'projects';
 const CLOUD_OWNER_ADMIN_EMAILS = new Set(['max.patissier@gmail.com']);
 const CLOUD_AUTO_PULL_INTERVAL_MS = 45000;
 const CLOUD_LOGBOOK_PUSH_DEBOUNCE_MS = 1800;
+const NAV_GPS_SAMPLE_INTERVAL_MS = 60 * 1000;
 const GOOGLE_PHOTOS_CLIENT_ID_STORAGE_KEY = 'ceiboGooglePhotosClientIdV1';
 let savedRoutesCache = [];
 let cloudClient = null;
@@ -111,6 +112,12 @@ let navWatchId = null;
 let navLatestHeelDeg = null;
 let navLatestSpeedKn = null;
 let navMotionListenerBound = false;
+let navGpsSampleTimerId = null;
+let navGpsLatestFix = null;
+let navGpsSessionStartMs = 0;
+let navGpsSessionStartEntryIndex = 0;
+let navGpsSessionHasSample = false;
+let navGpsTraceLayerGroup = null;
 let editingNavLogEntryId = null;
 let engineLogEntries = [];
 let editingEngineLogEntryId = null;
@@ -8203,6 +8210,7 @@ function renderNavLogList() {
     if (!Array.isArray(navLogEntries) || navLogEntries.length === 0) {
         container.innerHTML = `<div class="log-card">${t('Aucune entrée navigation pour le moment.', 'No hay entradas de navegación por ahora.')}</div>`;
         drawHeelSpeedChart();
+        renderNavGpsTraceOnMap();
         return;
     }
 
@@ -8248,6 +8256,67 @@ function renderNavLogList() {
         });
 
     drawHeelSpeedChart();
+    renderNavGpsTraceOnMap();
+}
+
+function getNavGpsTraceEntries() {
+    return (Array.isArray(navLogEntries) ? navLogEntries : [])
+        .filter(item => item?.source === 'gps-watch' && Number.isFinite(item?.lat) && Number.isFinite(item?.lng));
+}
+
+function ensureNavGpsTraceLayerGroup() {
+    if (!map) return null;
+    if (!navGpsTraceLayerGroup) {
+        navGpsTraceLayerGroup = L.layerGroup();
+    }
+    if (!map.hasLayer(navGpsTraceLayerGroup)) {
+        navGpsTraceLayerGroup.addTo(map);
+    }
+    return navGpsTraceLayerGroup;
+}
+
+function getNavHeelTraceColor(heelDeg) {
+    const heel = Math.abs(Number(heelDeg) || 0);
+    if (heel >= 25) return '#ff4d4d';
+    if (heel >= 15) return '#ffb648';
+    return '#34c759';
+}
+
+function renderNavGpsTraceOnMap() {
+    if (!map) return;
+
+    const traceEntries = getNavGpsTraceEntries();
+    const layerGroup = ensureNavGpsTraceLayerGroup();
+    if (!layerGroup) return;
+
+    layerGroup.clearLayers();
+    if (!traceEntries.length) return;
+
+    const latlngs = traceEntries.map(item => [item.lat, item.lng]);
+    const polyline = L.polyline(latlngs, {
+        color: '#5ac8fa',
+        weight: 3,
+        opacity: 0.9
+    });
+    layerGroup.addLayer(polyline);
+
+    // Keep markers lightweight: show heel points only on recent samples.
+    const heelMarkers = traceEntries.slice(-300);
+    heelMarkers.forEach(entry => {
+        const heel = Number.isFinite(entry?.heelDeg) ? entry.heelDeg : null;
+        const marker = L.circleMarker([entry.lat, entry.lng], {
+            radius: 4,
+            color: '#0b1f2e',
+            weight: 1,
+            fillColor: getNavHeelTraceColor(heel),
+            fillOpacity: 0.9
+        });
+
+        const timeLabel = formatDateTimeFr(entry?.timestamp);
+        const heelLabel = Number.isFinite(heel) ? `${heel.toFixed(1)}°` : t('N/A', 'N/A');
+        marker.bindPopup(`${t('Trace GPS', 'Traza GPS')}<br>${timeLabel}<br>${t('Inclinaison', 'Inclinación')}: ${heelLabel}`);
+        layerGroup.addLayer(marker);
+    });
 }
 
 function resetNavLogEditorForm() {
@@ -8357,6 +8426,66 @@ function appendNavLogEntry({ lat, lng, speedKn, heelDeg, source = 'gps', watchTi
     renderNavLogList();
 }
 
+function captureNavGpsSample(sampleSource = 'gps-watch') {
+    if (!navGpsLatestFix || !Number.isFinite(navGpsLatestFix.lat) || !Number.isFinite(navGpsLatestFix.lng)) {
+        return false;
+    }
+
+    appendNavLogEntry({
+        lat: navGpsLatestFix.lat,
+        lng: navGpsLatestFix.lng,
+        speedKn: navGpsLatestFix.speedKn,
+        heelDeg: Number.isFinite(navLatestHeelDeg) ? navLatestHeelDeg : null,
+        source: sampleSource
+    });
+
+    navGpsSessionHasSample = true;
+    return true;
+}
+
+function appendAutoNavSessionSummaryEntry() {
+    const sessionEntries = (Array.isArray(navLogEntries) ? navLogEntries.slice(navGpsSessionStartEntryIndex) : [])
+        .filter(item => item?.source === 'gps-watch' && Number.isFinite(item?.lat) && Number.isFinite(item?.lng));
+
+    if (!sessionEntries.length) return null;
+
+    let distance = 0;
+    for (let index = 1; index < sessionEntries.length; index++) {
+        const previous = sessionEntries[index - 1];
+        const current = sessionEntries[index];
+        distance += distanceNm(previous, current);
+    }
+
+    const speedValues = sessionEntries.map(item => item?.speedKn).filter(value => Number.isFinite(value));
+    const heelValues = sessionEntries.map(item => item?.heelDeg).filter(value => Number.isFinite(value));
+    const averageSpeed = speedValues.length ? speedValues.reduce((sum, value) => sum + value, 0) / speedValues.length : null;
+    const averageHeel = heelValues.length ? heelValues.reduce((sum, value) => sum + Math.abs(value), 0) / heelValues.length : null;
+    const durationMinutes = navGpsSessionStartMs > 0 ? Math.max(0, (Date.now() - navGpsSessionStartMs) / 60000) : null;
+
+    const summaryText = t(
+        `Session GPS auto: ${sessionEntries.length} points · durée ${durationMinutes ? durationMinutes.toFixed(1) : '0.0'} min · distance ${distance.toFixed(2)} NM · vitesse moy ${Number.isFinite(averageSpeed) ? averageSpeed.toFixed(1) : 'N/A'} kn · inclinaison moy ${Number.isFinite(averageHeel) ? averageHeel.toFixed(1) : 'N/A'}°`,
+        `Sesión GPS auto: ${sessionEntries.length} puntos · duración ${durationMinutes ? durationMinutes.toFixed(1) : '0.0'} min · distancia ${distance.toFixed(2)} NM · velocidad media ${Number.isFinite(averageSpeed) ? averageSpeed.toFixed(1) : 'N/A'} kn · inclinación media ${Number.isFinite(averageHeel) ? averageHeel.toFixed(1) : 'N/A'}°`
+    );
+
+    appendNavLogEntry({
+        lat: null,
+        lng: null,
+        speedKn: averageSpeed,
+        heelDeg: averageHeel,
+        source: 'manual',
+        watchTimeIso: new Date().toISOString(),
+        watchCrew: t('AUTO GPS', 'AUTO GPS'),
+        logDistanceNm: distance,
+        events: summaryText
+    });
+
+    return {
+        points: sessionEntries.length,
+        distance,
+        durationMinutes
+    };
+}
+
 function addManualNavigationLogEntry(event) {
     if (event?.preventDefault) event.preventDefault();
     if (event?.stopPropagation) event.stopPropagation();
@@ -8451,22 +8580,45 @@ function startNavigationLogging() {
         return;
     }
 
+    navGpsLatestFix = null;
+    navGpsSessionStartMs = Date.now();
+    navGpsSessionStartEntryIndex = navLogEntries.length;
+    navGpsSessionHasSample = false;
+
+    if (navGpsSampleTimerId !== null) {
+        window.clearInterval(navGpsSampleTimerId);
+        navGpsSampleTimerId = null;
+    }
+
+    navGpsSampleTimerId = window.setInterval(() => {
+        const saved = captureNavGpsSample('gps-watch');
+        if (saved) {
+            setNavLogStatus(t(`Log GPS actif · point sauvegardé (${NAV_GPS_SAMPLE_INTERVAL_MS / 1000}s) · ${navLogEntries.length} point(s)`, `Log GPS activo · punto guardado (${NAV_GPS_SAMPLE_INTERVAL_MS / 1000}s) · ${navLogEntries.length} punto(s)`));
+        }
+    }, NAV_GPS_SAMPLE_INTERVAL_MS);
+
     navWatchId = navigator.geolocation.watchPosition(
         position => {
             const latitude = Number(position?.coords?.latitude);
             const longitude = Number(position?.coords?.longitude);
             const speedMs = Number(position?.coords?.speed);
-            navLatestSpeedKn = Number.isFinite(speedMs) ? speedMs * 1.943844 : null;
+            const speedKn = Number.isFinite(speedMs) ? speedMs * 1.943844 : null;
+            navLatestSpeedKn = speedKn;
 
-            appendNavLogEntry({
+            if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+
+            navGpsLatestFix = {
                 lat: latitude,
                 lng: longitude,
-                speedKn: navLatestSpeedKn,
-                heelDeg: navLatestHeelDeg,
-                source: 'gps-watch'
-            });
+                speedKn,
+                fixTimeMs: Date.now()
+            };
 
-            setNavLogStatus(t(`Log GPS actif · ${navLogEntries.length} point(s)`, `Log GPS activo · ${navLogEntries.length} punto(s)`));
+            if (!navGpsSessionHasSample) {
+                captureNavGpsSample('gps-watch');
+            }
+
+            setNavLogStatus(t(`Log GPS actif · fix reçu · enregistrement chaque minute · ${navLogEntries.length} point(s)`, `Log GPS activo · fix recibido · guardado cada minuto · ${navLogEntries.length} punto(s)`));
         },
         error => {
             const details = error?.message ? `: ${error.message}` : '';
@@ -8480,16 +8632,45 @@ function startNavigationLogging() {
     );
 }
 
-function stopNavigationLogging() {
+function stopNavigationLogging(options = {}) {
+    const { createAutoSessionSummary = true } = options;
+
     if (navWatchId !== null && navigator.geolocation) {
         navigator.geolocation.clearWatch(navWatchId);
         navWatchId = null;
     }
-    setNavLogStatus(t(`Log GPS arrêté · ${navLogEntries.length} point(s) enregistrés.`, `Log GPS detenido · ${navLogEntries.length} punto(s) guardado(s).`));
+
+    if (navGpsSampleTimerId !== null) {
+        window.clearInterval(navGpsSampleTimerId);
+        navGpsSampleTimerId = null;
+    }
+
+    if (createAutoSessionSummary) {
+        captureNavGpsSample('gps-watch');
+    }
+
+    let summary = null;
+    if (createAutoSessionSummary) {
+        summary = appendAutoNavSessionSummaryEntry();
+    }
+
+    if (summary) {
+        setNavLogStatus(t(
+            `Log GPS arrêté · session enregistrée (${summary.points} points, ${summary.distance.toFixed(2)} NM).`,
+            `Log GPS detenido · sesión guardada (${summary.points} puntos, ${summary.distance.toFixed(2)} NM).`
+        ));
+    } else {
+        setNavLogStatus(t(`Log GPS arrêté · ${navLogEntries.length} point(s) enregistrés.`, `Log GPS detenido · ${navLogEntries.length} punto(s) guardado(s).`));
+    }
+
+    navGpsLatestFix = null;
+    navGpsSessionStartMs = 0;
+    navGpsSessionStartEntryIndex = navLogEntries.length;
+    navGpsSessionHasSample = false;
 }
 
 function clearNavigationLogbook() {
-    stopNavigationLogging();
+    stopNavigationLogging({ createAutoSessionSummary: false });
     navLogEntries = [];
     editingNavLogEntryId = null;
     logWorkspaceMode = 'none';
